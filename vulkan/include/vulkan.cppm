@@ -2,6 +2,7 @@ module;
 
 export module graphics.vulkan;
 
+export import vulkan;
 export import vk_mem_alloc;
 
 export import :config;

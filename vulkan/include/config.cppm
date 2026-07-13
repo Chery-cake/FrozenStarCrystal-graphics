@@ -6,7 +6,7 @@ export module graphics.vulkan:config;
 
 import std.compat;
 import signals;
-import vk_mem_alloc;
+import vulkan;
 
 export namespace graphics::vulkan {
 

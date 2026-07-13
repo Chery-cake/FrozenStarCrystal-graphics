@@ -4,7 +4,7 @@ module graphics.vulkan;
 
 import std.compat;
 import signals;
-import vk_mem_alloc;
+import vulkan;
 
 namespace graphics::vulkan {
 

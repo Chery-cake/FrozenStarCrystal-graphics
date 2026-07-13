@@ -3,6 +3,8 @@
 //
 // Uses vulkan.hpp dynamic dispatch loader for Vulkan function loading.
 
+/*
+
 // Include vulkan.hpp first with dynamic dispatch enabled
 #include <vulkan/vulkan.hpp>
 
@@ -19,3 +21,7 @@
 #include <vk_mem_alloc_static_assertions.hpp>
 
 #pragma clang diagnostic pop
+
+*/
+
+import vk_mem_alloc;

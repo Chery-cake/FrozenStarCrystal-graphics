@@ -4,7 +4,7 @@ module;
 
 module graphics.vulkan;
 
-import vk_mem_alloc;
+import vulkan;
 
 namespace graphics::vulkan {
 

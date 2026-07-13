@@ -37,9 +37,9 @@ struct FROZENSTARCRYSTAL_GRAPHICS_API AllocatedBuffer {
     [[nodiscard]] void *map() const;
     void unmap() const;
     void flush(vk::DeviceSize offset = 0,
-               vk::DeviceSize flushSize = VK_WHOLE_SIZE) const;
+               vk::DeviceSize flushSize = vk::WholeSize) const;
     void invalidate(vk::DeviceSize offset = 0,
-                    vk::DeviceSize invalSize = VK_WHOLE_SIZE) const;
+                    vk::DeviceSize invalSize = vk::WholeSize) const;
 };
 
 struct FROZENSTARCRYSTAL_GRAPHICS_API AllocatedImage {

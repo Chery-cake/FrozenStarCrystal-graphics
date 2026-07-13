@@ -199,7 +199,7 @@ target_compile_definitions(${PROJECT_NAME} PUBLIC
 
 if(USING_API STREQUAL "vulkan")
     target_compile_definitions(${PROJECT_NAME} PUBLIC GRAPHICS_BACKEND_VULKAN=1)
-    target_link_libraries(${PROJECT_NAME} PUBLIC vma)
+    target_link_libraries(${PROJECT_NAME} PUBLIC vulkan vma)
 else()
     message(FATAL_ERROR "Unsupported USING_API: ${USING_API}")
 endif()

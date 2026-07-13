@@ -5,7 +5,7 @@ module;
 export module graphics.vulkan:instance;
 
 import std.compat;
-import vk_mem_alloc;
+import vulkan;
 
 export namespace graphics::vulkan {
 

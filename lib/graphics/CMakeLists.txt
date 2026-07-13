@@ -48,10 +48,6 @@ elseif(UNIX)
     target_compile_definitions(${_vulkan_hpp_real} INTERFACE VK_USE_PLATFORM_XCB_KHR VK_USE_PLATFORM_WAYLAND_KHR)
 endif()
 
-file(GLOB VULKAN_HPP_MODULE_SOURCES
-    ${vulkan_hpp_SOURCE_DIR}/vulkan/*.cppm
-)
-
 add_library(vulkan vulkan.cpp)
 target_include_directories(vulkan PUBLIC
     ${vulkan_hpp_SOURCE_DIR}/Vulkan-Headers/include
@@ -95,14 +91,16 @@ set(VMA_STATIC_VULKAN_FUNCTIONS OFF CACHE BOOL "" FORCE)
 set(VMA_DYNAMIC_VULKAN_FUNCTIONS ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(_vma_hpp)
 
-add_library(vma INTERFACE)
-target_link_libraries(vma INTERFACE
+#get_target_property(_vma_hpp_module_real VulkanMemoryAllocator-Hpp::VulkanMemoryAllocator-HppModule ALIASED_TARGET)
+
+add_library(vma vma.cpp)
+target_link_libraries(vma PUBLIC
   vulkan
   VulkanMemoryAllocator-Hpp::VulkanMemoryAllocator-Hpp
   VulkanMemoryAllocator-Hpp::VulkanMemoryAllocator-HppModule
   #GPUOpen::VulkanMemoryAllocator
 )
-target_compile_definitions(vma INTERFACE
+target_compile_definitions(vma PUBLIC
     VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1
     VMA_STATIC_VULKAN_FUNCTIONS=0
     VMA_DYNAMIC_VULKAN_FUNCTIONS=1

@@ -5,7 +5,7 @@ module;
 export module graphics.vulkan:device;
 
 import std.compat;
-import vk_mem_alloc;
+import vulkan;
 
 import :instance;
 
