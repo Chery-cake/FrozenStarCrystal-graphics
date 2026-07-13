@@ -48,6 +48,8 @@
             "-isystem ${gccUnwrapped}/include/c++/${gccUnwrapped.version}/x86_64-unknown-linux-gnu"
             "-isystem ${gccUnwrapped}/include/c++/${gccUnwrapped.version}/backward"
             "-isystem ${glibcDev}/include"
+            "-isystem ${pkgs.libxcb.dev}/include"
+            "-isystem ${pkgs.wayland.dev}/include"
           ];
 
         # Scripts (exactly matching your devenv definitions)
@@ -67,6 +69,8 @@
               -DENABLE_TESTS="$ENABLE_TESTS" \
               -DSANITIZERS="$SANITIZERS" \
               -DUSING_API="$API" \
+              -DCMAKE_CXX_FLAGS="$CXXFLAGS" \
+              -DCMAKE_C_FLAGS="$CFLAGS" \
               -B build -G Ninja
           '';
         };
@@ -115,6 +119,10 @@
             cmake
             pkgs.ninja
             glibcDev
+            pkgs.vulkan-loader
+            pkgs.vulkan-validation-layers
+            pkgs.libxcb
+            pkgs.wayland
 
             pkgs.python3
 
@@ -134,6 +142,9 @@
                 "-L${gccUnwrapped}/lib"
                 "-L${gccUnwrapped}/lib64"
               ];
+
+            LD_LIBRARY_PATH = "${pkgs.vulkan-loader}/lib";
+            VK_LAYER_PATH = "${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d";
 
             TBB_DIR = "${pkgs.tbb.dev}/lib/cmake/TBB";
             CXX_MODULES_JSON = "${gccUnwrapped}/lib/libstdc++.modules.json";

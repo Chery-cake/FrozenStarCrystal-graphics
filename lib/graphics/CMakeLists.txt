@@ -32,6 +32,22 @@ set(VULKAN_HPP_DISPATCH_LOADER_DYNAMIC ON CACHE BOOL "Use dynamic loader")
 set(VULKAN_HPP_ENABLE_SHARED_STORAGE ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(vulkan_hpp)
 
+# Get the real (non-alias) targets for Vulkan-Hpp
+get_target_property(_vulkan_hpp_real Vulkan::Hpp ALIASED_TARGET)
+get_target_property(_vulkan_hpp_module_real Vulkan::HppModule ALIASED_TARGET)
+
+# Propagate platform defines to the real targets so the module gets built with them
+if(WIN32)
+    target_compile_definitions(${_vulkan_hpp_module_real} INTERFACE VK_USE_PLATFORM_WIN32_KHR)
+    target_compile_definitions(${_vulkan_hpp_real} INTERFACE VK_USE_PLATFORM_WIN32_KHR)
+elseif(APPLE)
+    target_compile_definitions(${_vulkan_hpp_module_real} INTERFACE VK_USE_PLATFORM_METAL_EXT)
+    target_compile_definitions(${_vulkan_hpp_real} INTERFACE VK_USE_PLATFORM_METAL_EXT)
+elseif(UNIX)
+    target_compile_definitions(${_vulkan_hpp_module_real} INTERFACE VK_USE_PLATFORM_XCB_KHR VK_USE_PLATFORM_WAYLAND_KHR)
+    target_compile_definitions(${_vulkan_hpp_real} INTERFACE VK_USE_PLATFORM_XCB_KHR VK_USE_PLATFORM_WAYLAND_KHR)
+endif()
+
 file(GLOB VULKAN_HPP_MODULE_SOURCES
     ${vulkan_hpp_SOURCE_DIR}/vulkan/*.cppm
 )
@@ -59,14 +75,6 @@ set_target_properties(vulkan PROPERTIES
     VISIBILITY_INLINES_HIDDEN OFF
     WINDOWS_EXPORT_ALL_SYMBOLS ON
 )
-
-if(WIN32)
-  target_compile_definitions(vulkan PUBLIC VK_USE_PLATFORM_WIN32_KHR)
-elseif(APPLE)
-  target_compile_definitions(vulkan PUBLIC VK_USE_PLATFORM_METAL_EXT)
-elseif(UNIX)
-  target_compile_definitions(vulkan PUBLIC VK_USE_PLATFORM_XCB_KHR VK_USE_PLATFORM_WAYLAND_KHR)
-endif()
 
 # ==============================================================================
 # VMA - Vulkan Memory Allocator

@@ -4,10 +4,7 @@ include_guard(GLOBAL)
 # ---- User-facing option ------------------------------------------------
 # Set the SANITIZERS cache variable to a comma-separated list of sanitizers
 # Example: cmake -B build -DSANITIZERS="address,undefined"
-option(SANITIZERS
-    "Sanitizers to enable (comma-separated): address, leak, thread, undefined, memory"
-    "address,undefined"
-)
+set(SANITIZERS "address,undefined" CACHE STRING "Sanitizers to enable (comma-separated): address, leak, thread, undefined, memory" FORCE)
 
 # ==============================================================================
 # Sanitizer Suppression File Path

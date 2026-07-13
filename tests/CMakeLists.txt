@@ -2,6 +2,8 @@
 # Tests - Main Configuration
 # ==============================================================================
 
+set(MAIN_LIB ${PROJECT_NAME})
+
 set(TEST_OUTPUT_DIR "${OUTPUT_DIR}/tests")
 
 function(add_tests_from_folder FOLDER)
@@ -32,6 +34,7 @@ function(add_tests_from_folder FOLDER)
         target_compile_definitions(${TEST_EXE} PRIVATE
             $<$<CONFIG:Debug>:ENGINE_DEBUG>
         )
+        add_dependencies(${TEST_EXE} ${ARG_LIBRARY})
         # Force assert() to remain active even in Release builds
         target_compile_options(${TEST_EXE} PRIVATE
             $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:GNU,Clang,AppleClang>>:-UNDEBUG>
@@ -43,6 +46,11 @@ function(add_tests_from_folder FOLDER)
         enable_sanitizers_test()
     endforeach()
 endfunction()
+
+add_tests_from_folder("vulkan"
+    LIBRARY
+        ${MAIN_LIB}
+)
 
 message(STATUS "Tests configured successfully")
 

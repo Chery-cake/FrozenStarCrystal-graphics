@@ -24,7 +24,7 @@ if(DEFINED ENV{CXX_MODULES_JSON})
     message(STATUS "Modules json included: $ENV{CXX_MODULES_JSON}")
 endif()
 
-project(FrozenStars
+project(FrozenStarCrystal-graphics
     VERSION 0.1.0
     LANGUAGES CXX C
 )
@@ -145,15 +145,11 @@ file(GLOB_RECURSE PUBLIC_FILES CONFIGURE_DEPENDS
 list(FILTER PUBLIC_FILES EXCLUDE REGEX "\\.(cppm|cc)$")
 
 file(GLOB_RECURSE MODULES_FILES CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cc"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/*.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/include/*.cc"
 
-    "${CMAKE_CURRENT_SOURCE_DIR}/${USING_API}/src/*.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/${USING_API}/src/*.cc"
     "${CMAKE_CURRENT_SOURCE_DIR}/${USING_API}/include/*.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/${USING_API}/include/*.cc"
 )
 
 add_library(${PROJECT_NAME})
@@ -175,7 +171,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
-
+    FrozenStarCrystal-core
 )
 
 target_compile_options(${PROJECT_NAME} PRIVATE
@@ -188,9 +184,22 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     $<$<CONFIG:Debug>:ENGINE_DEBUG>
 )
 
+# --- Application identity ---
+set(APP_NAME "${PROJECT_NAME}" CACHE STRING "Application name" FORCE)
+set(APP_VERSION_MAJOR 0 CACHE STRING "Application major version" FORCE)
+set(APP_VERSION_MINOR 0 CACHE STRING "Application minor version" FORCE)
+set(APP_VERSION_PATCH 0 CACHE STRING "Application patch version" FORCE)
+
+target_compile_definitions(${PROJECT_NAME} PUBLIC
+    APP_NAME="${APP_NAME}"
+    APP_VERSION_MAJOR=${APP_VERSION_MAJOR}
+    APP_VERSION_MINOR=${APP_VERSION_MINOR}
+    APP_VERSION_PATCH=${APP_VERSION_PATCH}
+)
+
 if(USING_API STREQUAL "vulkan")
     target_compile_definitions(${PROJECT_NAME} PUBLIC GRAPHICS_BACKEND_VULKAN=1)
-    target_link_libraries(${PROJECT_NAME} PUBLIC vulkan vma)
+    target_link_libraries(${PROJECT_NAME} PUBLIC vma)
 else()
     message(FATAL_ERROR "Unsupported USING_API: ${USING_API}")
 endif()
