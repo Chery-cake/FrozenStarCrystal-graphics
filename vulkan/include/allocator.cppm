@@ -76,7 +76,7 @@ struct FROZENSTARCRYSTAL_GRAPHICS_API BufferCreateInfo {
     vk::DeviceSize size = 0;
     vk::BufferUsageFlags usage;
     vma::MemoryUsage memoryUsage = vma::MemoryUsage::eAuto;
-    vma::AllocationCreateFlags flags = {};
+    vma::AllocationCreateFlags flags;
     std::string debugName;
 };
 
@@ -92,6 +92,106 @@ struct FROZENSTARCRYSTAL_GRAPHICS_API ImageCreateInfo {
     vma::MemoryUsage memoryUsage = vma::MemoryUsage::eAuto;
     vma::AllocationCreateFlags flags;
     std::string debugName;
+};
+
+class FROZENSTARCRYSTAL_GRAPHICS_API VMAAllocator {
+  private:
+    std::unique_ptr<vma::raii::Allocator> allocator_;
+    std::shared_ptr<vk::raii::Device> device_;
+    bool initialized_ = false;
+    mutable std::mutex mtx;
+
+  public:
+    struct MemoryStats {
+        vk::DeviceSize totalAllocated = 0;
+        vk::DeviceSize totalUsed = 0;
+        uint32_t allocationCount = 0;
+    };
+    [[nodiscard]] MemoryStats getStats() const;
+
+    VMAAllocator() = default;
+    ~VMAAllocator() { shutdown(); }
+
+    // Disable copy & move
+    VMAAllocator(const VMAAllocator &) = delete;
+    VMAAllocator &operator=(const VMAAllocator &) = delete;
+    VMAAllocator(VMAAllocator &&) = delete;
+    VMAAllocator &operator=(VMAAllocator &&) = delete;
+
+    bool initialize(const vk::raii::Instance &instance, GPUDevice &device);
+    void shutdown();
+
+    [[nodiscard]] bool isInitialized() const { return initialized_; }
+
+    [[nodiscard]] vma::Allocator getAllocator() const {
+        return allocator_ ? **allocator_ : vma::Allocator{};
+    }
+    [[nodiscard]] const vma::raii::Allocator &getRaiiAllocator() const {
+        return *allocator_;
+    }
+
+    AllocatedBuffer createBuffer(const BufferCreateInfo &info);
+
+    AllocatedBuffer createStagingBuffer(vk::DeviceSize size,
+                                        const std::string &debugName = "");
+    AllocatedBuffer createVertexBuffer(vk::DeviceSize size,
+                                       const std::string &debugName = "");
+    AllocatedBuffer createIndexBuffer(vk::DeviceSize size,
+                                      const std::string &debugName = "");
+    AllocatedBuffer createUniformBuffer(vk::DeviceSize size,
+                                        const std::string &debugName = "");
+    AllocatedBuffer createStorageBuffer(vk::DeviceSize size,
+                                        const std::string &debugName = "");
+    AllocatedBuffer createIndexStorageBuffer(vk::DeviceSize size,
+                                             const std::string &debugName = "");
+    AllocatedBuffer
+    createHostVisibleStorageBuffer(vk::DeviceSize size,
+                                   const std::string &debugName = "");
+
+    AllocatedImage createImage(const ImageCreateInfo &info);
+
+    AllocatedImage createImage2D(uint32_t width, uint32_t height,
+                                 vk::Format format, vk::ImageUsageFlags usage,
+                                 const std::string &debugName = "");
+    bool createImageView(
+        AllocatedImage &image,
+        vk::ImageAspectFlags aspectMask = vk::ImageAspectFlagBits::eColor);
+
+    void setDebugName(const AllocatedBuffer &buffer, const std::string &name);
+    void setDebugName(const AllocatedImage &image, const std::string &name);
+};
+
+class FROZENSTARCRYSTAL_GRAPHICS_API VMAManager {
+  private:
+    std::vector<std::unique_ptr<VMAAllocator>> allocators_;
+    uint32_t primaryIndex_ = 0;
+    bool initialized_ = false;
+
+  public:
+    VMAManager() = default;
+    ~VMAManager() { shutdown(); }
+
+    // Disable copy & move
+    VMAManager(const VMAManager &) = delete;
+    VMAManager &operator=(const VMAManager &) = delete;
+    VMAManager(VMAManager &&) = delete;
+    VMAManager &operator=(VMAManager &&) = delete;
+
+    bool initialize(const vk::raii::Instance &instance,
+                    DeviceManager &deviceManager);
+    void shutdown();
+
+    [[nodiscard]] bool isInitialized() const { return initialized_; }
+
+    [[nodiscard]] VMAAllocator &getPrimaryAllocator();
+    [[nodiscard]] const VMAAllocator &getPrimaryAllocator() const;
+
+    [[nodiscard]] VMAAllocator *getAllocator(uint32_t deviceIndex);
+    [[nodiscard]] const VMAAllocator *getAllocator(uint32_t deviceIndex) const;
+
+    [[nodiscard]] size_t getAllocatorCount() const {
+        return allocators_.size();
+    }
 };
 
 } // namespace graphics::vulkan

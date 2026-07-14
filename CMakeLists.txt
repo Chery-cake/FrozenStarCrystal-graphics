@@ -185,10 +185,28 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
 )
 
 # --- Application identity ---
-set(APP_NAME "${PROJECT_NAME}" CACHE STRING "Application name" FORCE)
-set(APP_VERSION_MAJOR 0 CACHE STRING "Application major version" FORCE)
-set(APP_VERSION_MINOR 0 CACHE STRING "Application minor version" FORCE)
-set(APP_VERSION_PATCH 0 CACHE STRING "Application patch version" FORCE)
+
+if(DEFINED ENV{APP_NAME})
+    set(APP_NAME "$ENV{APP_NAME}")
+else()
+    set(APP_NAME "${PROJECT_NAME}" CACHE STRING "Application name")
+endif()
+
+if(DEFINED ENV{APP_VERSION_MAJOR})
+    set(APP_VERSION_MAJOR "$ENV{APP_VERSION_MAJOR}")
+else()
+    set(APP_VERSION_MAJOR 0 CACHE STRING "Application major version")
+endif()
+if(DEFINED ENV{APP_VERSION_MINOR})
+    set(APP_VERSION_MINOR "$ENV{APP_VERSION_MINOR}")
+else()
+    set(APP_VERSION_MINOR 0 CACHE STRING "Application minor version")
+endif()
+if(DEFINED ENV{APP_VERSION_PATCH})
+    set(APP_VERSION_PATCH "$ENV{APP_VERSION_PATCH}")
+else()
+    set(APP_VERSION_PATCH 0 CACHE STRING "Application major version")
+endif()
 
 target_compile_definitions(${PROJECT_NAME} PUBLIC
     APP_NAME="${APP_NAME}"

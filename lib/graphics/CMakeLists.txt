@@ -18,9 +18,10 @@ include(ExternalProject)
 #FetchContent_Declare(
 #    vulkan_headers
 #    GIT_REPOSITORY https://github.com/KhronosGroup/Vulkan-Headers.git
-#    GIT_TAG vulkan-sdk-1.4.335.0
+#    GIT_TAG vulkan-sdk-1.4.350.1
 #    GIT_SHALLOW TRUE
 #)
+#FetchContent_MakeAvailable(vulkan_headers)
 
 FetchContent_Declare(
     vulkan_hpp
@@ -33,19 +34,23 @@ set(VULKAN_HPP_ENABLE_SHARED_STORAGE ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(vulkan_hpp)
 
 # Get the real (non-alias) targets for Vulkan-Hpp
+#get_target_property(_vulkan_headers_real Vulkan::Headers ALIASED_TARGET)
 get_target_property(_vulkan_hpp_real Vulkan::Hpp ALIASED_TARGET)
 get_target_property(_vulkan_hpp_module_real Vulkan::HppModule ALIASED_TARGET)
 
 # Propagate platform defines to the real targets so the module gets built with them
 if(WIN32)
-    target_compile_definitions(${_vulkan_hpp_module_real} INTERFACE VK_USE_PLATFORM_WIN32_KHR)
+    #target_compile_definitions(${_vulkan_headers_real} INTERFACE VK_USE_PLATFORM_WIN32_KHR)
     target_compile_definitions(${_vulkan_hpp_real} INTERFACE VK_USE_PLATFORM_WIN32_KHR)
+    target_compile_definitions(${_vulkan_hpp_module_real} INTERFACE VK_USE_PLATFORM_WIN32_KHR)
 elseif(APPLE)
-    target_compile_definitions(${_vulkan_hpp_module_real} INTERFACE VK_USE_PLATFORM_METAL_EXT)
+    #target_compile_definitions(${_vulkan_headers_real} INTERFACE VK_USE_PLATFORM_METAL_EXT)
     target_compile_definitions(${_vulkan_hpp_real} INTERFACE VK_USE_PLATFORM_METAL_EXT)
+    target_compile_definitions(${_vulkan_hpp_module_real} INTERFACE VK_USE_PLATFORM_METAL_EXT)
 elseif(UNIX)
-    target_compile_definitions(${_vulkan_hpp_module_real} INTERFACE VK_USE_PLATFORM_XCB_KHR VK_USE_PLATFORM_WAYLAND_KHR)
+    #target_compile_definitions(${_vulkan_headers_real} INTERFACE VK_USE_PLATFORM_XCB_KHR VK_USE_PLATFORM_WAYLAND_KHR)
     target_compile_definitions(${_vulkan_hpp_real} INTERFACE VK_USE_PLATFORM_XCB_KHR VK_USE_PLATFORM_WAYLAND_KHR)
+    target_compile_definitions(${_vulkan_hpp_module_real} INTERFACE VK_USE_PLATFORM_XCB_KHR VK_USE_PLATFORM_WAYLAND_KHR)
 endif()
 
 add_library(vulkan vulkan.cpp)
@@ -54,6 +59,7 @@ target_include_directories(vulkan PUBLIC
     ${vulkan_hpp_SOURCE_DIR}/vulkan
 )
 target_link_libraries(vulkan PUBLIC
+    #Vulkan::Headers
     Vulkan::Hpp
     Vulkan::HppModule
 )
@@ -96,9 +102,9 @@ FetchContent_MakeAvailable(_vma_hpp)
 add_library(vma vma.cpp)
 target_link_libraries(vma PUBLIC
   vulkan
+  GPUOpen::VulkanMemoryAllocator
   VulkanMemoryAllocator-Hpp::VulkanMemoryAllocator-Hpp
   VulkanMemoryAllocator-Hpp::VulkanMemoryAllocator-HppModule
-  #GPUOpen::VulkanMemoryAllocator
 )
 target_compile_definitions(vma PUBLIC
     VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1

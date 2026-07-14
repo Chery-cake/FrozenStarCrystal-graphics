@@ -189,7 +189,6 @@ bool Instance::initialize() {
                      e.what());
         return false;
     }
-
     vk::detail::defaultDispatchLoaderDynamic.init(**instance_, instanceProc);
 
     // Setup debug messenger

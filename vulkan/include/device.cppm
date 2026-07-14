@@ -42,7 +42,7 @@ struct FROZENSTARCRYSTAL_GRAPHICS_API GPUInfo {
 class FROZENSTARCRYSTAL_GRAPHICS_API GPUDevice {
   private:
     std::unique_ptr<vk::raii::PhysicalDevice> physicalDevice_;
-    std::unique_ptr<vk::raii::Device> device_;
+    std::shared_ptr<vk::raii::Device> device_;
     GPUInfo info_;
 
     vk::Queue graphicsQueue_;
@@ -75,13 +75,16 @@ class FROZENSTARCRYSTAL_GRAPHICS_API GPUDevice {
     [[nodiscard]] vk::PhysicalDevice getPhysicalDevice() const {
         return physicalDevice_ ? **physicalDevice_ : vk::PhysicalDevice{};
     }
-    [[nodiscard]] vk::Device getDevice() const {
-        return device_ ? **device_ : vk::Device{};
-    }
-
     [[nodiscard]] const vk::raii::PhysicalDevice &
     getRaiiPhysicalDevice() const {
         return *physicalDevice_;
+    }
+
+    [[nodiscard]] std::shared_ptr<vk::raii::Device> getDevicePtr() const {
+        return device_;
+    }
+    [[nodiscard]] vk::Device getDevice() const {
+        return device_ ? **device_ : vk::Device{};
     }
     [[nodiscard]] const vk::raii::Device &getRaiiDevice() const {
         return *device_;

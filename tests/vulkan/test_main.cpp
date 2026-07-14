@@ -13,5 +13,8 @@ int main() {
     graphics::vulkan::DeviceManager d_mam;
     d_mam.initialize(inst, conf);
 
+    graphics::vulkan::VMAManager v_mam;
+    v_mam.initialize(inst->getRaiiInstance(), d_mam);
+
     return 0;
 }

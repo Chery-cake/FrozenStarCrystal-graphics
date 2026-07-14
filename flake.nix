@@ -154,6 +154,11 @@
             SANITIZERS = "address,undefined";
             API = "vulkan";
 
+            APP_NAME = "Engine";
+            APP_VERSION_MAJOR = 0;
+            APP_VERSION_MINOR = 0;
+            APP_VERSION_PATCH = 0;
+
             # Disable fortify hardening only
             NIX_HARDENING_ENABLE = hardeningDisableFortify;
           };
@@ -186,6 +191,22 @@
                     export API="$2"
                     shift 2
                     ;;
+                  --app-name)
+                    export APP_NAME="$2"
+                    shift 2
+                    ;;
+                  --app-version-major)
+                    export APP_VERSION_MAJOR="$2"
+                    shift 2
+                    ;;
+                  --app-version-minor)
+                    export APP_VERSION_MINOR="$2"
+                    shift 2
+                    ;;
+                  --apo-version-patch)
+                    export APP_VERSION_PATCH="$2"
+                    shift 2
+                    ;;
                   *)
                     echo "Unknown option: $1" >&2
                     echo "Usage: settings [--build-type Release|Debug] [--tests ON|OFF] [--sanitizers address,undefined] [--api vulkan|opengl]" >&2
@@ -198,6 +219,10 @@
               echo "ENABLE_TESTS: $ENABLE_TESTS"
               echo "SANITIZERS: $SANITIZERS"
               echo "API: $API"
+              echo "APP_NAME: $APP_NAME"
+              echo "APP_VERSION_MAJOR: $APP_VERSION_MAJOR"
+              echo "APP_VERSION_MINOR: $APP_VERSION_MINOR"
+              echo "APP_VERSION_PATCH: $APP_VERSION_PATCH"
             }
 
             if [ -n "$PROMPT_COMMAND" ]; then
