@@ -161,37 +161,4 @@ class FROZENSTARCRYSTAL_GRAPHICS_API VMAAllocator {
     void setDebugName(const AllocatedImage &image, const std::string &name);
 };
 
-class FROZENSTARCRYSTAL_GRAPHICS_API VMAManager {
-  private:
-    std::vector<std::unique_ptr<VMAAllocator>> allocators_;
-    uint32_t primaryIndex_ = 0;
-    bool initialized_ = false;
-
-  public:
-    VMAManager() = default;
-    ~VMAManager() { shutdown(); }
-
-    // Disable copy & move
-    VMAManager(const VMAManager &) = delete;
-    VMAManager &operator=(const VMAManager &) = delete;
-    VMAManager(VMAManager &&) = delete;
-    VMAManager &operator=(VMAManager &&) = delete;
-
-    bool initialize(const vk::raii::Instance &instance,
-                    DeviceManager &deviceManager);
-    void shutdown();
-
-    [[nodiscard]] bool isInitialized() const { return initialized_; }
-
-    [[nodiscard]] VMAAllocator &getPrimaryAllocator();
-    [[nodiscard]] const VMAAllocator &getPrimaryAllocator() const;
-
-    [[nodiscard]] VMAAllocator *getAllocator(uint32_t deviceIndex);
-    [[nodiscard]] const VMAAllocator *getAllocator(uint32_t deviceIndex) const;
-
-    [[nodiscard]] size_t getAllocatorCount() const {
-        return allocators_.size();
-    }
-};
-
 } // namespace graphics::vulkan

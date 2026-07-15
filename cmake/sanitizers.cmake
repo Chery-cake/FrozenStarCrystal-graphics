@@ -4,7 +4,11 @@ include_guard(GLOBAL)
 # ---- User-facing option ------------------------------------------------
 # Set the SANITIZERS cache variable to a comma-separated list of sanitizers
 # Example: cmake -B build -DSANITIZERS="address,undefined"
-set(SANITIZERS "address,undefined" CACHE STRING "Sanitizers to enable (comma-separated): address, leak, thread, undefined, memory" FORCE)
+if(DEFINED $ENV{SANITIZERS})
+    set(SANITIZERS "$ENV{SANITIZERS}" CACHE STRING "Sanitizers to enable (comma-separated): address, leak, thread, undefined, memory" FORCE)
+else()
+    set(SANITIZERS "address,undefined" CACHE STRING "Sanitizers to enable (comma-separated): address, leak, thread, undefined, memory")
+endif()
 
 # ==============================================================================
 # Sanitizer Suppression File Path
@@ -26,7 +30,7 @@ endif()
 function(enable_sanitizers)
     if(NOT SANITIZERS)
         message(WARNING "No sanitizer enabled \n Example add: -DSANITIZERS=\"address,undefined\"")
-        return()  # nothing to do
+        return()
     endif()
 
     # Normalise the list
@@ -68,58 +72,11 @@ function(enable_sanitizers)
     endforeach()
     string(REPLACE ";" "," _san_flag_str "${_san_flag_list}")
 
-    # ---- Compiler/linker flags -----------------------------------------
-    # ---- Remove any already‑present sanitizer flags (make idempotent) ----
-    foreach(_flag_var CMAKE_C_FLAGS CMAKE_CXX_FLAGS
-                    CMAKE_EXE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS CMAKE_MODULE_LINKER_FLAGS)
-        string(REGEX REPLACE "-fsanitize=[^ ]*" "" ${_flag_var} "${${_flag_var}}")
-        string(REGEX REPLACE "-g -fno-omit-frame-pointer" "" ${_flag_var} "${${_flag_var}}")
-        # Clean up multiple spaces
-        string(STRIP "${${_flag_var}}" ${_flag_var})
-    endforeach()
-
-    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-        set(_common "-g -fno-omit-frame-pointer")
-        set(_san_flags "-fsanitize=${_san_flag_str}")
-
-        # Add to all languages (C, CXX) and linker steps
-        set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS} ${_common} ${_san_flags}"   PARENT_SCOPE)
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${_common} ${_san_flags}" PARENT_SCOPE)
-        set(CMAKE_EXE_LINKER_FLAGS    "${CMAKE_EXE_LINKER_FLAGS} ${_san_flags}"    PARENT_SCOPE)
-        set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${_san_flags}" PARENT_SCOPE)
-        set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} ${_san_flags}" PARENT_SCOPE)
-
-        # Also set them in the cache so sub‑directories see them
-        set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS} ${_common} ${_san_flags}"   CACHE STRING "" FORCE)
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${_common} ${_san_flags}" CACHE STRING "" FORCE)
-        set(CMAKE_EXE_LINKER_FLAGS    "${CMAKE_EXE_LINKER_FLAGS} ${_san_flags}"    CACHE STRING "" FORCE)
-        set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${_san_flags}" CACHE STRING "" FORCE)
-        set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} ${_san_flags}" CACHE STRING "" FORCE)
-
-    elseif(MSVC)
-        if("address" IN_LIST _san_lower_list)
-            set(_msvc_san "/fsanitize=address")
-            set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS} ${_msvc_san}"   PARENT_SCOPE)
-            set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${_msvc_san}" PARENT_SCOPE)
-            set(CMAKE_EXE_LINKER_FLAGS    "${CMAKE_EXE_LINKER_FLAGS} ${_msvc_san}"    PARENT_SCOPE)
-            set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${_msvc_san}" PARENT_SCOPE)
-
-            set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS} ${_msvc_san}"   CACHE STRING "" FORCE)
-            set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${_msvc_san}" CACHE STRING "" FORCE)
-            set(CMAKE_EXE_LINKER_FLAGS    "${CMAKE_EXE_LINKER_FLAGS} ${_msvc_san}"    CACHE STRING "" FORCE)
-            set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${_msvc_san}" CACHE STRING "" FORCE)
-        else()
-            message(WARNING "MSVC only supports AddressSanitizer; ignoring other choices")
-        endif()
-    endif()
-
-    # ---- Helper for test environment -----------------------------------
-    # Store the enabled sanitizers in the cache so ctest can react.
     set(ENABLED_SANITIZERS "${_san_lower_list}" CACHE INTERNAL "Sanitizers active in this build")
 
     string(REPLACE ";" "," _san_flag_str "${_san_flag_list}")
     target_compile_options(${PROJECT_NAME} PRIVATE
-        $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-fsanitize=${_san_flag_str}>
+        $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-g -fno-omit-frame-pointer -fsanitize=${_san_flag_str}>
         $<$<CXX_COMPILER_ID:MSVC>:/fsanitize=${_san_flag_str}>
     )
     target_link_options(${PROJECT_NAME} PRIVATE

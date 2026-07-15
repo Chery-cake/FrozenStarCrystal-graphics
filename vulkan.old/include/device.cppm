@@ -72,19 +72,19 @@ class FROZENSTARCRYSTAL_GRAPHICS_API GPUDevice {
     [[nodiscard]] bool isInitialized() const { return initialized_; }
     [[nodiscard]] const GPUInfo &getInfo() const { return info_; }
 
-    [[nodiscard]] vk::PhysicalDevice getPhysicalDevice() const {
-        return physicalDevice_ ? **physicalDevice_ : vk::PhysicalDevice{};
-    }
-    [[nodiscard]] const vk::raii::PhysicalDevice &
-    getRaiiPhysicalDevice() const {
-        return *physicalDevice_;
-    }
-
     [[nodiscard]] std::shared_ptr<vk::raii::Device> getDevicePtr() const {
         return device_;
     }
+    [[nodiscard]] vk::PhysicalDevice getPhysicalDevice() const {
+        return physicalDevice_ ? **physicalDevice_ : vk::PhysicalDevice{};
+    }
     [[nodiscard]] vk::Device getDevice() const {
         return device_ ? **device_ : vk::Device{};
+    }
+
+    [[nodiscard]] const vk::raii::PhysicalDevice &
+    getRaiiPhysicalDevice() const {
+        return *physicalDevice_;
     }
     [[nodiscard]] const vk::raii::Device &getRaiiDevice() const {
         return *device_;

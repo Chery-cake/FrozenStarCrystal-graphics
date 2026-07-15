@@ -9,14 +9,10 @@
 # ==============================================================================
 # Function to configure Debug build settings for a target
 # ==============================================================================
-function(target_configure_debug TARGET_NAME)
-    if(NOT TARGET ${TARGET_NAME})
-        message(FATAL_ERROR "target_configure_debug: Target '${TARGET_NAME}' does not exist")
-    endif()
-
+function(target_configure_debug)
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         # Debug-specific compile options
-        target_compile_options(${TARGET_NAME} PRIVATE
+        target_compile_options(${PROJECT_NAME} PRIVATE
             $<$<CONFIG:Debug>:
                 -g3                     # Maximum debug information
                 -O0                     # No optimization
@@ -27,7 +23,7 @@ function(target_configure_debug TARGET_NAME)
         )
 
         # Debug definitions
-        target_compile_definitions(${TARGET_NAME} PRIVATE
+        target_compile_definitions(${PROJECT_NAME} PRIVATE
             $<$<CONFIG:Debug>:
                 DEBUG
                 _DEBUG
@@ -35,7 +31,7 @@ function(target_configure_debug TARGET_NAME)
             >
         )
     elseif(MSVC)
-        target_compile_options(${TARGET_NAME} PRIVATE
+        target_compile_options(${PROJECT_NAME} PRIVATE
             $<$<CONFIG:Debug>:
                 /Zi         # Debug information
                 /Od         # No optimization
@@ -45,7 +41,7 @@ function(target_configure_debug TARGET_NAME)
             >
         )
 
-        target_compile_definitions(${TARGET_NAME} PRIVATE
+        target_compile_definitions(${PROJECT_NAME} PRIVATE
             $<$<CONFIG:Debug>:
                 DEBUG
                 _DEBUG
@@ -58,14 +54,10 @@ endfunction()
 # ==============================================================================
 # Function to configure Release build settings for a target
 # ==============================================================================
-function(target_configure_release TARGET_NAME)
-    if(NOT TARGET ${TARGET_NAME})
-        message(FATAL_ERROR "target_configure_release: Target '${TARGET_NAME}' does not exist")
-    endif()
-
+function(target_configure_release)
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         # Release-specific compile options - maximum optimization
-        target_compile_options(${TARGET_NAME} PRIVATE
+        target_compile_options(${PROJECT_NAME} PRIVATE
             $<$<CONFIG:Release>:
                 -O3                     # Maximum optimization
                 -funroll-loops          # Unroll loops
@@ -76,18 +68,8 @@ function(target_configure_release TARGET_NAME)
             >
         )
 
-        # Optional: Optimize for current CPU (not suitable for distribution)
-        if(ENGINE_OPTIMIZE_NATIVE)
-            target_compile_options(${TARGET_NAME} PRIVATE
-                $<$<CONFIG:Release>:
-                    -march=native       # Optimize for current CPU
-                    -mtune=native       # Tune for current CPU
-                >
-            )
-        endif()
-
         # Release definitions
-        target_compile_definitions(${TARGET_NAME} PRIVATE
+        target_compile_definitions(${PROJECT_NAME} PRIVATE
             $<$<CONFIG:Release>:
                 NDEBUG
                 ENGINE_RELEASE
@@ -96,13 +78,13 @@ function(target_configure_release TARGET_NAME)
 
         # Linker options for Release
         if(APPLE)
-            target_link_options(${TARGET_NAME} PRIVATE
+            target_link_options(${PROJECT_NAME} PRIVATE
                 $<$<CONFIG:Release>:
                     -Wl,-dead_strip         # Remove unused code (Apple ld)
                 >
             )
         else()
-            target_link_options(${TARGET_NAME} PRIVATE
+            target_link_options(${PROJECT_NAME} PRIVATE
                 $<$<CONFIG:Release>:
                     -Wl,--gc-sections       # Remove unused sections
                     -Wl,--strip-all         # Strip all symbols
@@ -111,7 +93,7 @@ function(target_configure_release TARGET_NAME)
             )
         endif()
     elseif(MSVC)
-        target_compile_options(${TARGET_NAME} PRIVATE
+        target_compile_options(${PROJECT_NAME} PRIVATE
             $<$<CONFIG:Release>:
                 /O2         # Maximum optimization
                 /Ob2        # Inline expansion
@@ -122,14 +104,14 @@ function(target_configure_release TARGET_NAME)
             >
         )
 
-        target_compile_definitions(${TARGET_NAME} PRIVATE
+        target_compile_definitions(${PROJECT_NAME} PRIVATE
             $<$<CONFIG:Release>:
                 NDEBUG
                 ENGINE_RELEASE
             >
         )
 
-        target_link_options(${TARGET_NAME} PRIVATE
+        target_link_options(${PROJECT_NAME} PRIVATE
             $<$<CONFIG:Release>:
                 /LTCG       # Link-time code generation
                 /OPT:REF    # Remove unreferenced code
@@ -142,55 +124,65 @@ endfunction()
 # ==============================================================================
 # Function to enable Link-Time Optimization (LTO) for Release builds
 # ==============================================================================
-function(target_enable_lto TARGET_NAME)
-    if(NOT TARGET ${TARGET_NAME})
-        message(FATAL_ERROR "target_enable_lto: Target '${TARGET_NAME}' does not exist")
-    endif()
-
+function(target_enable_lto)
     include(CheckIPOSupported)
     check_ipo_supported(RESULT lto_supported OUTPUT lto_error)
 
     if(lto_supported)
-        set_target_properties(${TARGET_NAME} PROPERTIES
+        set_target_properties(${PROJECT_NAME} PROPERTIES
             INTERPROCEDURAL_OPTIMIZATION_RELEASE ON
         )
-        message(STATUS "LTO enabled for ${TARGET_NAME} (Release builds)")
+        message(STATUS "LTO enabled for ${PROJECT_NAME} (Release builds)")
     else()
-        message(WARNING "LTO not supported for ${TARGET_NAME}: ${lto_error}")
+        message(WARNING "LTO not supported for ${PROJECT_NAME}: ${lto_error}")
     endif()
 endfunction()
 
 # ==============================================================================
 # Function to apply all build configurations to a target
 # ==============================================================================
-function(target_configure_build TARGET_NAME)
-    set(options ENABLE_LTO)
-    set(oneValueArgs "")
-    set(multiValueArgs SANITIZERS)
-    cmake_parse_arguments(CONFIG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+function(configure_build)
 
-    if(NOT TARGET ${TARGET_NAME})
-        message(FATAL_ERROR "target_configure_build: Target '${TARGET_NAME}' does not exist")
+    if(${CMAKE_BUILD_TYPE} STREQUAL "Debug")
+        # Apply Debug configuration
+        target_configure_debug()
+    else()
+        # Apply Release configuration
+        target_configure_release()
     endif()
-
-    # Apply Debug configuration
-    target_configure_debug(${TARGET_NAME})
-
-    # Apply Release configuration
-    target_configure_release(${TARGET_NAME})
 
     # Enable LTO if requested by the target AND the global option is enabled
-    if(CONFIG_ENABLE_LTO AND ENGINE_ENABLE_LTO AND BUILD_SHARED_LIBS)
-        target_enable_lto(${TARGET_NAME})
+    if(ENABLE_LTO)
+        target_enable_lto()
     endif()
+
+    if(SANITIZERS)
+        enable_sanitizers()
+    endif()
+
+    if(WARNINGS_LEVEL EQUAL 0)
+        target_set_no_warnings(${PROJECT_NAME})
+    elseif(WARNINGS_LEVEL EQUAL 1)
+        target_set_relaxed_warnings(${PROJECT_NAME})
+    elseif(WARNINGS_LEVEL EQUAL 2)
+        target_set_warnings(${PROJECT_NAME})
+    else()
+        message(WARNING "Warning level of ${WARNINGS_LEVEL} doesn't exist")
+    endif()
+
 endfunction()
 
 # ==============================================================================
 # Global Build Configuration Options
 # ==============================================================================
 
-# Release optimization options
-option(ENGINE_OPTIMIZE_NATIVE "Optimize for current CPU (not suitable for distribution)" OFF)
+option(ENABLE_LTO "Enable LTO" ON)
+
+if(DEFINED $ENV{WARNINGS_LEVEL})
+    set(WARNINGS_LEVEL "$ENV{WARNINGS_LEVEL}" CACHE STRING "Warnings Level 0-2" FORCE)
+else()
+    set(WARNINGS_LEVEL 2 CACHE STRING "Warnings Level 0-2")
+endif()
 
 # ==============================================================================
 # Print Configuration Summary
@@ -201,8 +193,9 @@ function(print_build_configuration)
     message(STATUS " Build Configuration")
     message(STATUS "========================================")
     message(STATUS " Build Type: ${CMAKE_BUILD_TYPE}")
-    message(STATUS " LTO Enabled: ${ENGINE_ENABLE_LTO}")
-    message(STATUS " Native Optimization: ${ENGINE_OPTIMIZE_NATIVE}")
+    message(STATUS " LTO Enabled: ${ENABLE_LTO}")
+    message(STATUS " Sanitizers Enabled: ${SANITIZERS}")
+    message(STATUS " Warnings Level: ${WARNINGS_LEVEL}")
     message(STATUS "========================================")
     message(STATUS "")
 endfunction()

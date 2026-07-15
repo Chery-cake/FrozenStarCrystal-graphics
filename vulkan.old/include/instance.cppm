@@ -9,6 +9,10 @@ import vulkan;
 
 export namespace graphics::vulkan {
 
+struct FROZENSTARCRYSTAL_GRAPHICS_API Surface {
+    std::unique_ptr<vk::raii::SurfaceKHR> surface_;
+};
+
 class FROZENSTARCRYSTAL_GRAPHICS_API Instance {
   private:
     bool setupDebugMessenger();
@@ -17,22 +21,15 @@ class FROZENSTARCRYSTAL_GRAPHICS_API Instance {
     std::shared_ptr<vk::raii::Instance> instance_;
     std::unique_ptr<vk::raii::DebugUtilsMessengerEXT> debugMessenger_;
 
-    bool initialized_ = false;
-
   public:
-    Instance() = default;
-    ~Instance() { shutdown(); };
+    Instance();
+    ~Instance();
 
     // Disable copy & move
     Instance(const Instance &) = delete;
     Instance &operator=(const Instance &) = delete;
     Instance(Instance &&) = delete;
     Instance &operator=(Instance &&) = delete;
-
-    bool initialize(); // TODO change to optional or expected the return
-    void shutdown();
-
-    [[nodiscard]] bool isInitialized() const { return initialized_; }
 
     [[nodiscard]] vk::Instance getInstance() const {
         return instance_ ? **instance_ : vk::Instance{};

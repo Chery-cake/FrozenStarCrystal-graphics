@@ -1,7 +1,5 @@
 module;
 
-#include <cstdio>
-
 module graphics.vulkan;
 
 import vulkan;
@@ -30,72 +28,51 @@ debugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
         severity = "ERROR";
     }
 
-    std::println(stderr, "[Vulkan {}] {}", severity, pCallbackData->pMessage);
+    std::cerr << std::format("[Vulkan {}] {}\n", severity,
+                             pCallbackData->pMessage);
 
     return vk::False;
 }
 
-void Instance::shutdown() {
-    if (!initialized_) {
-        return;
-    }
-
-    debugMessenger_.reset();
-    instance_.reset();
-    context_.reset();
-
-    initialized_ = false;
-
-    std::println("[Instance] Shutdown complete");
-}
-
-bool Instance::initialize() {
-    if (initialized_) {
-        std::println("[Instance] Already initialized");
-        return false;
-    }
-
+Instance::Instance() {
     vk::detail::DynamicLoader dl;
     auto instanceProc =
         dl.getProcAddress<PFN_vkGetInstanceProcAddr>("vkGetInstanceProcAddr");
     if (instanceProc == nullptr) {
-        std::println(stderr, "[Instance] Failed to get vkGetInstanceProcAddr");
-        return false;
+        throw std::runtime_error(
+            "[Instance] Failed to get vkGetInstanceProcAddr");
     }
     vk::detail::defaultDispatchLoaderDynamic.init(instanceProc);
 
-    try {
-        context_ = std::make_unique<vk::raii::Context>();
-    } catch (const vk::SystemError &e) {
-        std::println("[Instance] Failed to create context: {}", e.what());
-        return false;
-    }
+    context_ = std::make_unique<vk::raii::Context>();
 
-    auto &layers = Config::instance().getInstanceLayers();
+    const auto &layers = Config::instance().getInstanceLayers();
 
     auto unsupportedList = checkLayerSupport(layers);
     std::unordered_set<std::string> unsupported(unsupportedList.begin(),
                                                 unsupportedList.end());
     if (!unsupported.empty()) {
-        std::println(stderr,
-                     "[Instance] Skipping unsupported instance layers:");
-        std::ranges::for_each(
-            unsupportedList.begin(), unsupportedList.end(),
-            [](const auto &layer) { std::println(stderr, "  - {}", layer); });
-        return false;
+        std::cerr << std::format(
+            "[Instance] Skipping unsupported instance layers:\n");
+        std::ranges::for_each(unsupportedList.begin(), unsupportedList.end(),
+                              [](const auto &layer) {
+                                  std::cerr << std::format("  - {}\n", layer);
+                              });
+        throw std::runtime_error("Necessary layers not supported\n");
     }
 
-    auto &optionalLayers = Config::instance().getOptionalInstanceLayers();
+    const auto &optionalLayers = Config::instance().getOptionalInstanceLayers();
 
     unsupportedList = checkLayerSupport(optionalLayers);
     unsupported.insert(unsupportedList.begin(), unsupportedList.end());
 
     if (!unsupported.empty()) {
-        std::println(stderr, "[Instance] Skipping unsupported "
-                             "optional instance layers:");
-        std::ranges::for_each(
-            unsupportedList.begin(), unsupportedList.end(),
-            [](const auto &layer) { std::println(stderr, "  - {}", layer); });
+        std::cerr << std::format(
+            "[Instance] Skipping unsupported optional instance layers:\n");
+        std::ranges::for_each(unsupportedList.begin(), unsupportedList.end(),
+                              [](const auto &layer) {
+                                  std::cerr << std::format("  - {}\n", layer);
+                              });
     }
 
     // Add supported instance layers
@@ -116,28 +93,30 @@ bool Instance::initialize() {
         std::back_inserter(enabledLayers));
 
     // Check extension support
-    auto &exts = Config::instance().getInstanceExtensions();
+    const auto &exts = Config::instance().getInstanceExtensions();
     auto unsupportedExtensionsList = checkExtensionSupport(exts);
     std::unordered_set<std::string> unsupportedExt(
         unsupportedExtensionsList.begin(), unsupportedExtensionsList.end());
     if (!unsupportedExt.empty()) {
-        std::println(stderr, "[Instance] Unsupported extensions:");
+        std::cerr << std::format("[Instance] Unsupported extensions:\n");
         std::ranges::for_each(
             unsupportedExt.begin(), unsupportedExt.end(),
-            [](const auto &ext) { std::println(stderr, "  - {}", ext); });
-        return false;
+            [](const auto &ext) { std::cerr << std::format("  - {}\n", ext); });
+        throw std::runtime_error("Necessary extensions not supported");
     }
 
-    auto &optionalExts = Config::instance().getOptionalInstanceExtensions();
+    const auto &optionalExts =
+        Config::instance().getOptionalInstanceExtensions();
     unsupportedExtensionsList = checkExtensionSupport(optionalExts);
     unsupportedExt.insert(unsupportedExtensionsList.begin(),
                           unsupportedExtensionsList.end());
 
     if (!unsupportedExt.empty()) {
-        std::println(stderr, "[Instance] Unsupported optional extensions:");
+        std::cerr << std::format(
+            "[Instance] Unsupported optional extensions:\n");
         std::ranges::for_each(
             unsupportedExt.begin(), unsupportedExt.end(),
-            [](const auto &ext) { std::println(stderr, "  - {}", ext); });
+            [](const auto &ext) { std::cerr << std::format("  - {}\n", ext); });
     }
 
     // Prepare extension list
@@ -182,26 +161,27 @@ bool Instance::initialize() {
     createInfo.pNext = &debugCreateInfo;
 #endif
 
-    try {
-        instance_ = std::make_unique<vk::raii::Instance>(*context_, createInfo);
-    } catch (const vk::SystemError &e) {
-        std::println(stderr, "[Instance] Failed to create instance: {}",
-                     e.what());
-        return false;
-    }
+    instance_ = std::make_unique<vk::raii::Instance>(*context_, createInfo);
     vk::detail::defaultDispatchLoaderDynamic.init(**instance_, instanceProc);
 
     // Setup debug messenger
 #ifdef ENGINE_DEBUG
     if (!setupDebugMessenger()) {
-        std::println(stderr, "[Instance] Failed to setup debug messenger");
+        std::cerr << std::format(
+            "[Instance] Failed to setup debug messenger\n");
         // Continue anyway, not critical
     }
 #endif
 
-    initialized_ = true;
     std::println("[Instance] Initialized successfully");
-    return true;
+}
+
+Instance::~Instance() {
+    debugMessenger_.reset();
+    instance_.reset();
+    context_.reset();
+
+    std::cout << "[Instance] Shutdown complete\n";
 }
 
 std::vector<std::string> Instance::getAvailableExtensions() {
@@ -294,8 +274,8 @@ bool Instance::setupDebugMessenger() {
             *instance_, createInfo);
         return true;
     } catch (const vk::SystemError &e) {
-        std::println(stderr, "[Instance] Failed to create debug messenger: {}",
-                     e.what());
+        std::cerr << std::format(
+            "[Instance] Failed to create debug messenger: {}\n", e.what());
         return false;
     }
 }

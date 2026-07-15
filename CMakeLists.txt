@@ -86,30 +86,22 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     add_compile_options(-fdiagnostics-color=always)
 elseif (CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
     add_compile_options(/diagnostics:color)
-    # Force synchronous PDB writes as a safety net.
     add_compile_options(/FS)
     set(CMAKE_PDB_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/pdb)
-    # Use embedded debug info (/Z7) instead of separate PDB (/Zi).
-    # sccache does not support PDB-based debug info, causing fatal error
-    # C1041 when parallel cl.exe processes collide on shared vc*.pdb files.
-    # /Z7 embeds debug info directly in .obj files, avoiding contention.
     set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "Embedded")
-    # Force CMP0141=NEW in FetchContent sub-projects that call
-    # cmake_minimum_required with versions older than 3.25.  Without this,
-    # those sub-projects revert to CMP0141=OLD and CMake injects /Zi
-    # via its internal debug-info handling, ignoring the property above.
     set(CMAKE_POLICY_DEFAULT_CMP0141 NEW)
 endif()
 
 # ==============================================================================
 # Custom CMake Modules
 # ==============================================================================
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+set(INC_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
-include(CompilerWarnings)
-include(BuildConfiguration)
-include(CrossCompiling)
-include(AddEngineModule)
+include(${INC_PATH}/CompilerWarnings.cmake)
+include(${INC_PATH}/BuildConfiguration.cmake)
+include(${INC_PATH}/CrossCompiling.cmake)
+include(${INC_PATH}/AddEngineModule.cmake)
+include(${INC_PATH}/sanitizers.cmake)
 
 # ==============================================================================
 # Dependencies
@@ -174,11 +166,6 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     FrozenStarCrystal-core
 )
 
-target_compile_options(${PROJECT_NAME} PRIVATE
-    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
-    $<$<CXX_COMPILER_ID:MSVC>:/W4 /wd4251>
-)
-
 # Add ENGINE_DEBUG definition for Debug builds
 target_compile_definitions(${PROJECT_NAME} PRIVATE
     $<$<CONFIG:Debug>:ENGINE_DEBUG>
@@ -217,7 +204,7 @@ target_compile_definitions(${PROJECT_NAME} PUBLIC
 
 if(USING_API STREQUAL "vulkan")
     target_compile_definitions(${PROJECT_NAME} PUBLIC GRAPHICS_BACKEND_VULKAN=1)
-    target_link_libraries(${PROJECT_NAME} PUBLIC vulkan vma)
+    target_link_libraries(${PROJECT_NAME} PUBLIC vk vma slang)
 else()
     message(FATAL_ERROR "Unsupported USING_API: ${USING_API}")
 endif()
@@ -227,10 +214,7 @@ create_export(${PROJECT_NAME} MODULES ${MODULES_FILES})
 # ==============================================================================
 # Apply Build Configuration
 # ==============================================================================
-target_configure_build(${PROJECT_NAME}
-    ENABLE_LTO
-    ENABLE_SANITIZERS
-)
+configure_build()
 
 # Apply platform-specific configuration
 target_configure_platform(${PROJECT_NAME})
@@ -240,28 +224,16 @@ target_configure_rpath(${PROJECT_NAME})
 # Tests
 # ==============================================================================
 option(ENABLE_TESTS "Add and Compile the project tests" OFF)
+option(FSC_TESTS "Force enable tests" OFF)
 
-if(ENABLE_TESTS)
-    include(sanitizers)
-    enable_sanitizers()
+if((ENABLE_TESTS AND PROJECT_IS_TOP_LEVEL) OR FSC_TESTS)
     add_subdirectory(tests)
-else()
-    string(REGEX REPLACE "-fsanitize=[^ ]*" "" CMAKE_C_FLAGS   "${CMAKE_C_FLAGS}")
-    string(REGEX REPLACE "-fsanitize=[^ ]*" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
-    string(REGEX REPLACE "-fsanitize=[^ ]*" "" CMAKE_EXE_LINKER_FLAGS   "${CMAKE_EXE_LINKER_FLAGS}")
-    string(REGEX REPLACE "-fsanitize=[^ ]*" "" CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS}")
-    string(REGEX REPLACE "-fsanitize=[^ ]*" "" CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS}")
-    string(REGEX REPLACE "-g -fno-omit-frame-pointer" "" CMAKE_C_FLAGS   "${CMAKE_C_FLAGS}")
-    string(REGEX REPLACE "-g -fno-omit-frame-pointer" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
-    string(REGEX REPLACE "-g -fno-omit-frame-pointer" "" CMAKE_EXE_LINKER_FLAGS   "${CMAKE_EXE_LINKER_FLAGS}")
-    string(REGEX REPLACE "-g -fno-omit-frame-pointer" "" CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS}")
-    string(REGEX REPLACE "-g -fno-omit-frame-pointer" "" CMAKE_MODULE_LINKER_FLAGS   "${CMAKE_MODULE_LINKER_FLAGS}")
 endif()
 
 # ==============================================================================
 # Generate .clangd Configuration
 # ==============================================================================
-include(GenerateClangd)
+include(${INC_PATH}/GenerateClangd.cmake)
 
 # ==============================================================================
 # Installation
@@ -282,6 +254,7 @@ message(STATUS "========================================")
 message(STATUS " Modular C++ Engine v${PROJECT_VERSION}")
 message(STATUS "========================================")
 message(STATUS " Build Type: ${CMAKE_BUILD_TYPE}")
+message(STATUS " Build Shared Libs: ${BUILD_SHARED_LIBS}")
 message(STATUS " C++ Standard: ${CMAKE_CXX_STANDARD}")
 message(STATUS " C++ Compiler Standard: ${CMAKE_CXX_COMPILER_ID}")
 message(STATUS " C Standard: ${CMAKE_C_STANDARD}")

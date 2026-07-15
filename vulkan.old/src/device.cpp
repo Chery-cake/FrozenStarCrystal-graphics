@@ -224,11 +224,6 @@ bool DeviceManager::initialize(std::shared_ptr<Instance> instance,
         return false;
     }
 
-    if (!instance->isInitialized()) {
-        std::println(stderr, "[DeviceManager] VulkanInstance not initialized");
-        return false;
-    }
-
     instance_ = instance;
 
     // Enumerate physical devices

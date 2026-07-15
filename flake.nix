@@ -37,6 +37,8 @@
 
         llvm = pkgs.llvmPackages_22;
         clang = llvm.libstdcxxClang;
+        llvmTools = llvm.llvm;
+        lld = llvm.lld;
 
         glibcDev = pkgs.glibc.dev;
 
@@ -68,9 +70,15 @@
             cmake -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
               -DENABLE_TESTS="$ENABLE_TESTS" \
               -DSANITIZERS="$SANITIZERS" \
+              -DENABLE_LTO="$ENABLE_LTO" \
+              -DBUILD_SHARED_LIBS="$BUILD_SHARED_LIBS" \
+              -DWARNINGS_LEVEL="$WARNINGS_LEVEL" \
+              -DTREAT_WARNINGS_AS_ERRORS="$TREAT_WARNINGS_AS_ERRORS" \
               -DUSING_API="$API" \
               -DCMAKE_CXX_FLAGS="$CXXFLAGS" \
               -DCMAKE_C_FLAGS="$CFLAGS" \
+              -DCMAKE_CXX_COMPILER_AR="${llvmTools}/bin/llvm-ar" \
+              -DCMAKE_CXX_COMPILER_RANLIB="${llvmTools}/bin/llvm-ranlib" \
               -B build -G Ninja
           '';
         };
@@ -113,23 +121,23 @@
           # Packages available in the shell
           nativeBuildInputs = [
             pkgs.git
-            pkgs.tbb.dev
             gcc
             clang
+            lld
             cmake
             pkgs.ninja
             glibcDev
-            pkgs.vulkan-loader
-            pkgs.vulkan-validation-layers
-            pkgs.libxcb
-            pkgs.wayland
-
-            pkgs.python3
 
             cleanScript
             buildScript
             compileScript
             testScript
+
+            pkgs.tbb.dev
+            pkgs.vulkan-loader
+            pkgs.vulkan-validation-layers
+
+            pkgs.python3
           ];
 
           env = {
@@ -152,6 +160,10 @@
             BUILD_TYPE = "Debug";
             ENABLE_TESTS = "ON";
             SANITIZERS = "address,undefined";
+            ENABLE_LTO = "ON";
+            BUILD_SHARED_LIBS = "ON";
+            WARNINGS_LEVEL = 2;
+            TREAT_WARNINGS_AS_ERRORS = "OFF";
             API = "vulkan";
 
             APP_NAME = "Engine";
@@ -187,6 +199,22 @@
                     export SANITIZERS="$2"
                     shift 2
                     ;;
+                  --lto)
+                    export ENABLE_LTO="$2"
+                    shift 2
+                    ;;
+                  --build-shared-libs)
+                    export BUILD_SHARED_LIBS="$2"
+                    shift 2
+                    ;;
+                  --warnings-level)
+                    export WARNINGS_LEVEL="$2"
+                    shift 2
+                    ;;
+                  --warnings-as-errors)
+                    export TREAT_WARNINGS_AS_ERRORS="$2"
+                    shift 2
+                    ;;
                   --api)
                     export API="$2"
                     shift 2
@@ -209,7 +237,7 @@
                     ;;
                   *)
                     echo "Unknown option: $1" >&2
-                    echo "Usage: settings [--build-type Release|Debug] [--tests ON|OFF] [--sanitizers address,undefined] [--api vulkan|opengl]" >&2
+                    echo "Usage: settings [--build-type Release|Debug] [--tests ON|OFF] [--sanitizers address,undefined|\"\"] [--lto ON|OFF] [--build-shared-libs ON|OFF] [--warnings-level 0|1|2] [--warnings-as-errors ON|OFF] [--api vulkan|opengl] [--app-name name] [--app-version-* 0]" >&2
                     return 1
                     ;;
                 esac
@@ -218,6 +246,10 @@
               echo "BUILD_TYPE: $BUILD_TYPE"
               echo "ENABLE_TESTS: $ENABLE_TESTS"
               echo "SANITIZERS: $SANITIZERS"
+              echo "ENABLE_LTO: $ENABLE_LTO"
+              echo "BUILD_SHARED_LIBS: $BUILD_SHARED_LIBS"
+              echo "WARNINGS_LEVEL: $WARNINGS_LEVEL"
+              echo "TREAT_WARNINGS_AS_ERRORS: $TREAT_WARNINGS_AS_ERRORS"
               echo "API: $API"
               echo "APP_NAME: $APP_NAME"
               echo "APP_VERSION_MAJOR: $APP_VERSION_MAJOR"

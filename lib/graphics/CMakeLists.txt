@@ -53,24 +53,24 @@ elseif(UNIX)
     target_compile_definitions(${_vulkan_hpp_module_real} INTERFACE VK_USE_PLATFORM_XCB_KHR VK_USE_PLATFORM_WAYLAND_KHR)
 endif()
 
-add_library(vulkan vulkan.cpp)
-target_include_directories(vulkan PUBLIC
+add_library(vk vulkan.cpp)
+target_include_directories(vk PUBLIC
     ${vulkan_hpp_SOURCE_DIR}/Vulkan-Headers/include
     ${vulkan_hpp_SOURCE_DIR}/vulkan
 )
-target_link_libraries(vulkan PUBLIC
+target_link_libraries(vk PUBLIC
     #Vulkan::Headers
     Vulkan::Hpp
     Vulkan::HppModule
 )
-target_compile_definitions(vulkan PUBLIC
+target_compile_definitions(vk PUBLIC
     VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1
     VULKAN_HPP_STORAGE_SHARED
 )
 #target_compile_definitions(vulkan PRIVATE
 #  VULKAN_HPP_STORAGE_SHARED_EXPORT
 #)
-set_target_properties(vulkan PROPERTIES
+set_target_properties(vk PROPERTIES
     POSITION_INDEPENDENT_CODE ON
     CXX_VISIBILITY_PRESET default
     C_VISIBILITY_PRESET default
@@ -101,7 +101,7 @@ FetchContent_MakeAvailable(_vma_hpp)
 
 add_library(vma vma.cpp)
 target_link_libraries(vma PUBLIC
-  vulkan
+  vk
   GPUOpen::VulkanMemoryAllocator
   VulkanMemoryAllocator-Hpp::VulkanMemoryAllocator-Hpp
   VulkanMemoryAllocator-Hpp::VulkanMemoryAllocator-HppModule
@@ -166,12 +166,10 @@ if(APPLE)
         COMMENT "[MoltenVK] Copying libMoltenVK.dylib to output"
     )
 
-    target_link_libraries(vulkan PUBLIC moltenvk)
-    add_dependencies(vulkan copy_moltenvk)
+    target_link_libraries(vk PUBLIC moltenvk)
+    add_dependencies(vk copy_moltenvk)
     message(STATUS "MoltenVK configured (macOS)")
 endif()
-
-
 
 # ==============================================================================
 # shader-slang/slang - Runtime shader compiler - manual external project

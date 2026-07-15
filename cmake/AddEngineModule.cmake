@@ -47,7 +47,7 @@ endfunction()
 function(add_module)
     set(options "")
     set(oneValueArgs "")
-    set(multiValueArgs DEPENDS CONFIGS)
+    set(multiValueArgs DEPENDS)
     cmake_parse_arguments(ARG "" "" "${multiValueArgs}" ${ARGN})
 
     file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS
@@ -85,11 +85,6 @@ function(add_module)
 
     target_link_libraries(${PROJECT_NAME} ${ARG_DEPENDS})
 
-    target_compile_options(${PROJECT_NAME} PRIVATE
-        $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
-        $<$<CXX_COMPILER_ID:MSVC>:/W4 /wd4251>
-    )
-
     target_compile_definitions(${PROJECT_NAME}
         PRIVATE
             $<$<CONFIG:Debug>:ENGINE_DEBUG>
@@ -98,11 +93,11 @@ function(add_module)
 
     create_export(${PROJECT_NAME})
 
-    if(ENABLE_TESTS)
+    if(SANITIZERS)
         enable_sanitizers()
     endif()
 
-    target_configure_build(${PROJECT_NAME} ${ARG_CONFIGS})
+    configure_build()
     target_configure_platform(${PROJECT_NAME})
     target_configure_rpath(${PROJECT_NAME})
 

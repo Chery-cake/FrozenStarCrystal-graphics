@@ -43,7 +43,9 @@ function(add_tests_from_folder FOLDER)
 
         add_test(NAME ${TEST_NAME} COMMAND ${TEST_EXE})
 
-        enable_sanitizers_test()
+        if(SANITIZERS)
+            enable_sanitizers_test()
+        endif()
     endforeach()
 endfunction()
 
