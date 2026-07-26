@@ -50,8 +50,12 @@
             "-isystem ${gccUnwrapped}/include/c++/${gccUnwrapped.version}/x86_64-unknown-linux-gnu"
             "-isystem ${gccUnwrapped}/include/c++/${gccUnwrapped.version}/backward"
             "-isystem ${glibcDev}/include"
+
+
+            # XCB / Wayland / xkbcommon headers (needed by Vulkan & GLFW)
             "-isystem ${pkgs.libxcb.dev}/include"
             "-isystem ${pkgs.wayland.dev}/include"
+            "-isystem ${pkgs.libxkbcommon.dev}/include"
           ];
 
         # Scripts (exactly matching your devenv definitions)
@@ -138,11 +142,32 @@
             pkgs.vulkan-validation-layers
 
             pkgs.python3
+
+            # for tests
+            pkgs.pkg-config
+
+            pkgs.libx11
+            pkgs.libxrandr
+            pkgs.libxinerama
+            pkgs.libxcursor
+            pkgs.libxi
+            pkgs.libxext
+            pkgs.libxxf86vm
+            pkgs.libxdamage
+            pkgs.libxfixes
+
+            pkgs.libxcb
+
+            pkgs.wayland
+            pkgs.wayland-scanner
+            pkgs.wayland-protocols
+            pkgs.libxkbcommon
           ];
 
           env = {
             CXXFLAGS = flags;
             CFLAGS = flags;
+
 
             NIX_LDFLAGS =
               with builtins;
@@ -151,7 +176,39 @@
                 "-L${gccUnwrapped}/lib64"
               ];
 
-            LD_LIBRARY_PATH = "${pkgs.vulkan-loader}/lib";
+            LD_LIBRARY_PATH = with pkgs; lib.makeLibraryPath ([
+              vulkan-loader
+              libx11
+              libxrandr
+              libxinerama
+              libxcursor
+              libxi
+              libxext
+              libxxf86vm
+              libxdamage
+              libxfixes
+              libxcb
+              wayland
+              wayland-protocols
+              libxkbcommon
+            ]) + ":/run/opengl-driver/lib";
+
+            PKG_CONFIG_PATH = with pkgs; lib.makeSearchPath "lib/pkgconfig" [
+              wayland.dev
+              wayland-protocols
+              libxkbcommon.dev
+              libxcb.dev
+              libx11.dev
+              libxrandr.dev
+              libxinerama.dev
+              libxcursor.dev
+              libxi.dev
+              libxext.dev
+              libxxf86vm.dev
+              libxdamage.dev
+              libxfixes.dev
+            ];
+
             VK_LAYER_PATH = "${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d";
 
             TBB_DIR = "${pkgs.tbb.dev}/lib/cmake/TBB";
@@ -256,22 +313,6 @@
               echo "APP_VERSION_MINOR: $APP_VERSION_MINOR"
               echo "APP_VERSION_PATCH: $APP_VERSION_PATCH"
             }
-
-            if [ -n "$PROMPT_COMMAND" ]; then
-              _NIX_DEV_ORIG_PROMPT_COMMAND="$PROMPT_COMMAND"
-              PROMPT_COMMAND='__nix_dev_prompt'
-              __nix_dev_prompt() {
-              # run the original command that sets PS1
-              eval "$_NIX_DEV_ORIG_PROMPT_COMMAND"
-              # then replace user/host just before the prompt is displayed
-              PS1="$(echo "$PS1" | sed 's/\\u@\\h/nix-shell/; s/\\u/nix-shell/')"
-            }
-            else
-              if [ -z "$__NIX_DEV_ORIG_PS1" ]; then
-                export __NIX_DEV_ORIG_PS1="$PS1"
-              fi
-                PS1="$(echo "$__NIX_DEV_ORIG_PS1" | sed 's/\\u@\\h/nix-shell/; s/\\u/nix-shell/')"
-            fi
           '';
         };
       }

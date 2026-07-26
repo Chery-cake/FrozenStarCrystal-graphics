@@ -6,6 +6,8 @@ set(MAIN_LIB ${PROJECT_NAME})
 
 set(TEST_OUTPUT_DIR "${OUTPUT_DIR}/tests")
 
+include(${CMAKE_CURRENT_SOURCE_DIR}/tests_libs.cmake)
+
 function(add_tests_from_folder FOLDER)
     set(multiValueArgs LIBRARY)
     cmake_parse_arguments(ARG "" "" "${multiValueArgs}" ${ARGN})
@@ -52,6 +54,7 @@ endfunction()
 add_tests_from_folder("vulkan"
     LIBRARY
         ${MAIN_LIB}
+        glfw
 )
 
 message(STATUS "Tests configured successfully")

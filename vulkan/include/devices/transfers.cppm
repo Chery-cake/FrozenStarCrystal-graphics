@@ -1,0 +1,108 @@
+module;
+
+export module graphics.vulkan.devices:transfers;
+
+import std.compat;
+import vulkan;
+
+import :info;
+import :device;
+import :swapchain;
+
+export namespace graphics::vulkan::devices {
+
+// ---------- intra‑device transfers (same Device&) ----------
+
+// Buffer -> Buffer
+void transfer(Device &device, const AllocatedBuffer &src,
+              vk::DeviceSize srcOffset, AllocatedBuffer &dst,
+              vk::DeviceSize dstOffset, vk::DeviceSize size);
+
+// Buffer -> Image (whole image, one mip level 0, layer 0, whole extent)
+void transfer(
+    Device &device, const AllocatedBuffer &src, vk::DeviceSize bufferOffset,
+    AllocatedImage &dst,
+    vk::ImageLayout dstFinalLayout = vk::ImageLayout::eShaderReadOnlyOptimal);
+
+// Image -> Buffer (whole image, mip 0, layer 0)
+void transfer(
+    Device &device, const AllocatedImage &src,
+    vk::ImageLayout srcCurrentLayout, // caller must provide current layout
+    AllocatedBuffer &dst, vk::DeviceSize bufferOffset);
+
+// Image -> Image (whole images, mip 0, layer 0)
+void transfer(
+    Device &device, const AllocatedImage &src, vk::ImageLayout srcCurrentLayout,
+    AllocatedImage &dst, vk::ImageLayout dstCurrentLayout,
+    vk::ImageLayout dstFinalLayout = vk::ImageLayout::eShaderReadOnlyOptimal);
+
+// ---------- Swapchain helpers (record into existing command buffer) ----------
+
+// Buffer -> Swapchain image
+// Transitions the swapchain image from currentLayout to
+// VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, copies, then transitions to
+// dstFinalLayout.
+void recordTransfer(
+    vk::CommandBuffer cmd, const AllocatedBuffer &src, vk::DeviceSize srcOffset,
+    vk::Image swapchainImage, vk::Extent2D imageExtent, vk::Format imageFormat,
+    vk::ImageLayout
+        currentLayout, // e.g., VK_IMAGE_LAYOUT_UNDEFINED after acquire
+    vk::ImageLayout dstFinalLayout = vk::ImageLayout::ePresentSrcKHR);
+
+// Swapchain image -> Buffer
+void recordTransfer(
+    vk::CommandBuffer cmd, vk::Image swapchainImage, vk::Extent2D imageExtent,
+    vk::Format imageFormat, vk::ImageLayout currentLayout, AllocatedBuffer &dst,
+    vk::DeviceSize dstOffset,
+    vk::ImageLayout finalLayout = vk::ImageLayout::ePresentSrcKHR);
+
+// Image -> Swapchain image
+void recordTransfer(
+    vk::CommandBuffer cmd, const AllocatedImage &src,
+    vk::ImageLayout srcCurrentLayout, vk::Image swapchainImage,
+    vk::Extent2D imageExtent, vk::Format imageFormat,
+    vk::ImageLayout currentLayout,
+    vk::ImageLayout dstFinalLayout = vk::ImageLayout::ePresentSrcKHR);
+
+// Swapchain image -> Image
+void recordTransfer(
+    vk::CommandBuffer cmd, vk::Image swapchainImage, vk::Extent2D imageExtent,
+    vk::Format imageFormat, vk::ImageLayout currentLayout, AllocatedImage &dst,
+    vk::ImageLayout dstCurrentLayout,
+    vk::ImageLayout dstFinalLayout = vk::ImageLayout::eShaderReadOnlyOptimal);
+
+// ---------- inter‑device transfers (two Device&) ----------
+
+// Buffer -> Buffer (different devices)
+void transfer(Device &srcDevice, const AllocatedBuffer &src,
+              vk::DeviceSize srcOffset, Device &dstDevice, AllocatedBuffer &dst,
+              vk::DeviceSize dstOffset, vk::DeviceSize size);
+
+// Buffer -> Image  (different devices)
+void transfer(
+    Device &srcDevice, const AllocatedBuffer &src, vk::DeviceSize srcOffset,
+    Device &dstDevice, AllocatedImage &dst,
+    vk::ImageLayout dstFinalLayout = vk::ImageLayout::eShaderReadOnlyOptimal);
+
+// Image -> Buffer  (different devices)
+void transfer(Device &srcDevice, const AllocatedImage &src,
+              vk::ImageLayout srcCurrentLayout, Device &dstDevice,
+              AllocatedBuffer &dst, vk::DeviceSize dstOffset);
+
+// Image -> Image  (different devices)
+void transfer(
+    Device &srcDevice, const AllocatedImage &src,
+    vk::ImageLayout srcCurrentLayout, Device &dstDevice, AllocatedImage &dst,
+    vk::ImageLayout dstFinalLayout = vk::ImageLayout::eShaderReadOnlyOptimal);
+
+// (Swapchain inter‑device not provided – swapchain is tightly bound to its
+// device)
+
+} // namespace graphics::vulkan::devices
+
+// TODO
+// add more overloads for images transfers
+// for more ranges, mip levels, regions, and multiple images at a time
+//
+// verify vk::AccessFlagBits used, add option to overwrite default values,
+// especially vk::AccessFlagBits::eNone
