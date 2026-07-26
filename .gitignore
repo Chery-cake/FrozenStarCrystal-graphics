@@ -114,3 +114,4 @@ build/
 
 bin/
 *.clangd
+*.fsc_config

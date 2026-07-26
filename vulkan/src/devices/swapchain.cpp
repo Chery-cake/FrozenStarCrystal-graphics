@@ -181,6 +181,13 @@ Swapchain::~Swapchain() {
 
   frames_.clear();
 
+  // 1. Destroy all device‑level child objects while the device is still alive
+  imageAvailableSemaphores_.clear();
+  renderFinishedSemaphores_.clear();
+  inFlightFences_.clear();
+  waitFences_.clear();
+
+  // 2. Now it's safe to tear down the swapchain and device
   swapchain_.reset();
 
   windowInfo_.reset();

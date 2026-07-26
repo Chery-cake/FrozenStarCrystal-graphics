@@ -27,6 +27,50 @@ if(NOT DEFINED LSAN_SUPPRESSION_FILE)
         "Path to LSan suppression file")
 endif()
 
+# ---- Generate a source file with default options & suppressions ----
+function(_generate_sanitizer_defaults TARGET_NAME)
+    set(deps_file "${CMAKE_CURRENT_BINARY_DIR}/sanitizer_defaults_${TARGET_NAME}.cpp")
+    set(content "")
+
+    # ASan / LSan
+    if("address" IN_LIST ENABLED_SANITIZERS OR "leak" IN_LIST ENABLED_SANITIZERS)
+        # ASAN_OPTIONS
+        set(asan_opts "detect_leaks=1:detect_stack_use_after_return=1:check_initialization_order=1:strict_init_order=1")
+        if(ASAN_SUPPRESSION_FILE)
+            set(asan_opts "${asan_opts}:suppressions=${ASAN_SUPPRESSION_FILE}")
+        endif()
+        string(APPEND content
+            "extern \"C\" const char *__asan_default_options() { return \"${asan_opts}\"; }\n"
+        )
+
+        # LSAN_OPTIONS (for standalone LSan)
+        set(lsan_opts "")
+        if(LSAN_SUPPRESSION_FILE)
+            set(lsan_opts "suppressions=${LSAN_SUPPRESSION_FILE}:print_suppressions=0")
+        else()
+            set(lsan_opts "print_suppressions=0")
+        endif()
+        string(APPEND content
+            "extern \"C\" const char *__lsan_default_options() { return \"${lsan_opts}\"; }\n"
+        )
+
+        # Also provide LSAN suppressions inline if you prefer the raw list
+        # But using the file is easier.
+    endif()
+
+    # UBSan
+    if("undefined" IN_LIST ENABLED_SANITIZERS)
+        string(APPEND content
+            "extern \"C\" const char *__ubsan_default_options() { return \"print_stacktrace=1\"; }\n"
+        )
+    endif()
+
+    if(content)
+        file(WRITE "${deps_file}" "${content}")
+        target_sources(${TARGET_NAME} PRIVATE "${deps_file}")
+    endif()
+endfunction()
+
 function(enable_sanitizers)
     if(NOT SANITIZERS)
         message(WARNING "No sanitizer enabled \n Example add: -DSANITIZERS=\"address,undefined\"")
@@ -83,6 +127,8 @@ function(enable_sanitizers)
         $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-fsanitize=${_san_flag_str}>
         $<$<CXX_COMPILER_ID:MSVC>:/fsanitize=${_san_flag_str}>
     )
+
+    _generate_sanitizer_defaults(${PROJECT_NAME})
 
     # Propagate suppression files into ASAN_OPTIONS / LSAN_OPTIONS for CTest.
     set(_target_env "")
@@ -164,6 +210,8 @@ function(enable_sanitizers_test)
         $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-fsanitize=${_san_flag_str}>
         $<$<CXX_COMPILER_ID:MSVC>:/fsanitize=${_san_flag_str}>
     )
+
+    _generate_sanitizer_defaults(${TEST_EXE})
 
     # Propagate suppression files into ASAN_OPTIONS / LSAN_OPTIONS for CTest.
     set(_test_env "")

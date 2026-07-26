@@ -51,14 +51,93 @@
             "-isystem ${gccUnwrapped}/include/c++/${gccUnwrapped.version}/backward"
             "-isystem ${glibcDev}/include"
 
-
             # XCB / Wayland / xkbcommon headers (needed by Vulkan & GLFW)
             "-isystem ${pkgs.libxcb.dev}/include"
             "-isystem ${pkgs.wayland.dev}/include"
             "-isystem ${pkgs.libxkbcommon.dev}/include"
           ];
 
-        # Scripts (exactly matching your devenv definitions)
+        settingsScript = pkgs.writeShellApplication {
+          name = "settings";
+          text = ''
+            CONFIG_FILE="''${FSC_CONFIG_FILE:-$PROJECT_ROOT/.fsc_config}"
+
+            if [ -z "$CONFIG_FILE" ]; then
+              echo "ERROR: FSC_CONFIG_FILE or PROJECT_ROOT not set." >&2
+              exit 1
+            fi
+
+            # If no arguments, print current settings
+            if [ $# -eq 0 ]; then
+              if [ -f "$CONFIG_FILE" ]; then
+                # shellcheck disable=SC1090
+                source "$CONFIG_FILE"
+                echo "Current settings (from $CONFIG_FILE):"
+                echo "  BUILD_TYPE               = $BUILD_TYPE"
+                echo "  ENABLE_TESTS             = $ENABLE_TESTS"
+                echo "  SANITIZERS               = $SANITIZERS"
+                echo "  ENABLE_LTO               = $ENABLE_LTO"
+                echo "  BUILD_SHARED_LIBS        = $BUILD_SHARED_LIBS"
+                echo "  WARNINGS_LEVEL           = $WARNINGS_LEVEL"
+                echo "  TREAT_WARNINGS_AS_ERRORS = $TREAT_WARNINGS_AS_ERRORS"
+                echo "  API                      = $API"
+                echo "  APP_NAME                 = $APP_NAME"
+                echo "  APP_VERSION_MAJOR        = $APP_VERSION_MAJOR"
+                echo "  APP_VERSION_MINOR        = $APP_VERSION_MINOR"
+                echo "  APP_VERSION_PATCH        = $APP_VERSION_PATCH"
+              else
+                echo "No config file found at $CONFIG_FILE"
+              fi
+              exit 0
+            fi
+
+            # Parse new values
+            declare -A new
+            while [[ $# -gt 0 ]]; do
+              case "$1" in
+                --build-type)          new[BUILD_TYPE]="$2"; shift 2 ;;
+                --tests)               new[ENABLE_TESTS]="$2"; shift 2 ;;
+                --sanitizers)          new[SANITIZERS]="$2"; shift 2 ;;
+                --lto)                 new[ENABLE_LTO]="$2"; shift 2 ;;
+                --build-shared-libs)   new[BUILD_SHARED_LIBS]="$2"; shift 2 ;;
+                --warnings-level)      new[WARNINGS_LEVEL]="$2"; shift 2 ;;
+                --warnings-as-errors)  new[TREAT_WARNINGS_AS_ERRORS]="$2"; shift 2 ;;
+                --api)                 new[API]="$2"; shift 2 ;;
+                --app-name)            new[APP_NAME]="$2"; shift 2 ;;
+                --app-version-major)   new[APP_VERSION_MAJOR]="$2"; shift 2 ;;
+                --app-version-minor)   new[APP_VERSION_MINOR]="$2"; shift 2 ;;
+                --app-version-patch)   new[APP_VERSION_PATCH]="$2"; shift 2 ;;
+                *)
+                  echo "Unknown option: $1" >&2
+                  echo "Usage: settings [--build-type Release|Debug] [--tests ON|OFF] [--sanitizers address,undefined|\"\"] [--lto ON|OFF] [--build-shared-libs ON|OFF] [--warnings-level 0|1|2] [--warnings-as-errors ON|OFF] [--api vulkan] [--app-name name] [--app-version-(major|minor|patch) 0|(version number)]" >&2
+                  exit 1
+                  ;;
+              esac
+            done
+
+            # Load existing config (if any) to preserve other keys
+            if [ -f "$CONFIG_FILE" ]; then
+              # shellcheck disable=SC1090
+              source "$CONFIG_FILE"
+            fi
+
+            # Override with newly supplied values
+            for key in "''${!new[@]}"; do
+              declare "$key=''${new[$key]}"
+            done
+
+            # Write the config file
+            true > "$CONFIG_FILE"
+            for var in BUILD_TYPE ENABLE_TESTS SANITIZERS ENABLE_LTO BUILD_SHARED_LIBS \
+                       WARNINGS_LEVEL TREAT_WARNINGS_AS_ERRORS API APP_NAME \
+                       APP_VERSION_MAJOR APP_VERSION_MINOR APP_VERSION_PATCH; do
+              echo "$var=''${!var}" >> "$CONFIG_FILE"
+            done
+
+            echo "Settings written to $CONFIG_FILE"
+          '';
+        };
+
         cleanScript = pkgs.writeShellApplication {
           name = "clean";
           text = ''
@@ -70,6 +149,13 @@
         buildScript = pkgs.writeShellApplication {
           name = "build";
           text = ''
+            if [ -f "$PROJECT_ROOT/.fsc_config" ]; then
+              # shellcheck disable=SC1091
+              source "$PROJECT_ROOT/.fsc_config"
+            else
+              echo "Warning: .fsc_config not found; using environment defaults" >&2
+            fi
+
             cd "$PROJECT_ROOT"
             cmake -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
               -DENABLE_TESTS="$ENABLE_TESTS" \
@@ -90,6 +176,11 @@
         compileScript = pkgs.writeShellApplication {
           name = "compile";
           text = ''
+            if [ -f "$PROJECT_ROOT/.fsc_config" ]; then
+              # shellcheck disable=SC1091
+              source "$PROJECT_ROOT/.fsc_config"
+            fi
+
             CORES=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
 
             while [[ $# -gt 0 ]]; do
@@ -98,7 +189,7 @@
                 *)
                   echo "Unknown option: $1" >&2;
                   echo "Usage compile [--cores 5]"
-                  return 1
+                  exit 1
                   ;;
               esac
             done
@@ -132,6 +223,7 @@
             pkgs.ninja
             glibcDev
 
+            settingsScript
             cleanScript
             buildScript
             compileScript
@@ -168,7 +260,6 @@
             CXXFLAGS = flags;
             CFLAGS = flags;
 
-
             NIX_LDFLAGS =
               with builtins;
               concatStringsSep " " [
@@ -176,38 +267,43 @@
                 "-L${gccUnwrapped}/lib64"
               ];
 
-            LD_LIBRARY_PATH = with pkgs; lib.makeLibraryPath ([
-              vulkan-loader
-              libx11
-              libxrandr
-              libxinerama
-              libxcursor
-              libxi
-              libxext
-              libxxf86vm
-              libxdamage
-              libxfixes
-              libxcb
-              wayland
-              wayland-protocols
-              libxkbcommon
-            ]) + ":/run/opengl-driver/lib";
+            LD_LIBRARY_PATH =
+              with pkgs;
+              lib.makeLibraryPath ([
+                vulkan-loader
+                libx11
+                libxrandr
+                libxinerama
+                libxcursor
+                libxi
+                libxext
+                libxxf86vm
+                libxdamage
+                libxfixes
+                libxcb
+                wayland
+                wayland-protocols
+                libxkbcommon
+              ])
+              + ":/run/opengl-driver/lib";
 
-            PKG_CONFIG_PATH = with pkgs; lib.makeSearchPath "lib/pkgconfig" [
-              wayland.dev
-              wayland-protocols
-              libxkbcommon.dev
-              libxcb.dev
-              libx11.dev
-              libxrandr.dev
-              libxinerama.dev
-              libxcursor.dev
-              libxi.dev
-              libxext.dev
-              libxxf86vm.dev
-              libxdamage.dev
-              libxfixes.dev
-            ];
+            PKG_CONFIG_PATH =
+              with pkgs;
+              lib.makeSearchPath "lib/pkgconfig" [
+                wayland.dev
+                wayland-protocols
+                libxkbcommon.dev
+                libxcb.dev
+                libx11.dev
+                libxrandr.dev
+                libxinerama.dev
+                libxcursor.dev
+                libxi.dev
+                libxext.dev
+                libxxf86vm.dev
+                libxdamage.dev
+                libxfixes.dev
+              ];
 
             VK_LAYER_PATH = "${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d";
 
@@ -238,81 +334,38 @@
             export CC="${clang}/bin/clang"
             export CXX="${clang}/bin/clang++"
 
+            export FSC_CONFIG_FILE="$PROJECT_ROOT/.fsc_config"
+
+            if [ ! -f "$FSC_CONFIG_FILE" ]; then
+              cat > "$FSC_CONFIG_FILE" <<'EOF'
+            BUILD_TYPE="Debug"
+            ENABLE_TESTS="ON"
+            SANITIZERS="address,undefined"
+            ENABLE_LTO="ON"
+            BUILD_SHARED_LIBS="ON"
+            WARNINGS_LEVEL=2
+            TREAT_WARNINGS_AS_ERRORS="OFF"
+            API="vulkan"
+            APP_NAME="Engine"
+            APP_VERSION_MAJOR=0
+            APP_VERSION_MINOR=0
+            APP_VERSION_PATCH=0
+            EOF
+              echo "Created default config at $FSC_CONFIG_FILE"
+            fi
+
+            load_settings() {
+              # shellcheck disable=SC1090
+              source "$FSC_CONFIG_FILE"
+              export BUILD_TYPE ENABLE_TESTS SANITIZERS ENABLE_LTO BUILD_SHARED_LIBS \
+                     WARNINGS_LEVEL TREAT_WARNINGS_AS_ERRORS API APP_NAME \
+                     APP_VERSION_MAJOR APP_VERSION_MINOR APP_VERSION_PATCH
+            }
+
+            load_settings
+
             echo "C compiler:   $CC   ($( $CC   --version | head -n1 ))"
             echo "C++ compiler: $CXX ($( $CXX --version | head -n1 ))"
-
-            settings() {
-              while [[ $# -gt 0 ]]; do
-                case "$1" in
-                  --build-type)
-                    export BUILD_TYPE="$2"
-                    shift 2
-                    ;;
-                  --tests)
-                    export ENABLE_TESTS="$2"
-                    shift 2
-                    ;;
-                  --sanitizers)
-                    export SANITIZERS="$2"
-                    shift 2
-                    ;;
-                  --lto)
-                    export ENABLE_LTO="$2"
-                    shift 2
-                    ;;
-                  --build-shared-libs)
-                    export BUILD_SHARED_LIBS="$2"
-                    shift 2
-                    ;;
-                  --warnings-level)
-                    export WARNINGS_LEVEL="$2"
-                    shift 2
-                    ;;
-                  --warnings-as-errors)
-                    export TREAT_WARNINGS_AS_ERRORS="$2"
-                    shift 2
-                    ;;
-                  --api)
-                    export API="$2"
-                    shift 2
-                    ;;
-                  --app-name)
-                    export APP_NAME="$2"
-                    shift 2
-                    ;;
-                  --app-version-major)
-                    export APP_VERSION_MAJOR="$2"
-                    shift 2
-                    ;;
-                  --app-version-minor)
-                    export APP_VERSION_MINOR="$2"
-                    shift 2
-                    ;;
-                  --apo-version-patch)
-                    export APP_VERSION_PATCH="$2"
-                    shift 2
-                    ;;
-                  *)
-                    echo "Unknown option: $1" >&2
-                    echo "Usage: settings [--build-type Release|Debug] [--tests ON|OFF] [--sanitizers address,undefined|\"\"] [--lto ON|OFF] [--build-shared-libs ON|OFF] [--warnings-level 0|1|2] [--warnings-as-errors ON|OFF] [--api vulkan|opengl] [--app-name name] [--app-version-* 0]" >&2
-                    return 1
-                    ;;
-                esac
-              done
-
-              echo "BUILD_TYPE: $BUILD_TYPE"
-              echo "ENABLE_TESTS: $ENABLE_TESTS"
-              echo "SANITIZERS: $SANITIZERS"
-              echo "ENABLE_LTO: $ENABLE_LTO"
-              echo "BUILD_SHARED_LIBS: $BUILD_SHARED_LIBS"
-              echo "WARNINGS_LEVEL: $WARNINGS_LEVEL"
-              echo "TREAT_WARNINGS_AS_ERRORS: $TREAT_WARNINGS_AS_ERRORS"
-              echo "API: $API"
-              echo "APP_NAME: $APP_NAME"
-              echo "APP_VERSION_MAJOR: $APP_VERSION_MAJOR"
-              echo "APP_VERSION_MINOR: $APP_VERSION_MINOR"
-              echo "APP_VERSION_PATCH: $APP_VERSION_PATCH"
-            }
           '';
         };
       }

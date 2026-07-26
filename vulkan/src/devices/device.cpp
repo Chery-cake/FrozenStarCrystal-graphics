@@ -33,11 +33,14 @@ std::optional<uint32_t> findPresentQueue(vk::raii::SurfaceKHR *surface,
 
 } // namespace
 
-static std::unordered_map<std::thread::id, Device *> touchedDevices;
+static std::unordered_map<std::thread::id, Device *> &getTouchedDevices() {
+  static std::unordered_map<std::thread::id, Device *> devices;
+  return devices;
+}
 
 struct GlobalThreadCleanup {
   ~GlobalThreadCleanup() {
-    std::ranges::for_each(touchedDevices,
+    std::ranges::for_each(getTouchedDevices(),
                           [](std::pair<std::thread::id, Device *> pair) {
                             pair.second->removeThreadPools(pair.first);
                           });
@@ -204,7 +207,9 @@ Device::Device(const vk::raii::Instance &instance,
 
 Device::~Device() {
 
-  std::erase_if(touchedDevices,
+  windows_.clear();
+
+  std::erase_if(getTouchedDevices(),
                 [this](std::pair<std::thread::id, Device *> pair) {
                   return pair.second == this;
                 });
@@ -496,13 +501,14 @@ CommandBufferPool &Device::getProtectedPool() {
 }
 
 void Device::ensureThreadCleanup() {
+  auto &devices = getTouchedDevices();
   auto it = std::ranges::find_if(
-      touchedDevices, [this](std::pair<std::thread::id, Device *> pair) {
+      devices, [this](std::pair<std::thread::id, Device *> pair) {
         return pair.second == this;
       });
 
-  if (it == std::ranges::end(touchedDevices)) {
-    touchedDevices.emplace(std::this_thread::get_id(), this);
+  if (it == std::ranges::end(devices)) {
+    devices.emplace(std::this_thread::get_id(), this);
   }
 }
 
