@@ -146,12 +146,12 @@ int main() {
     bestEntry.device->waitIdle();
     pool.reset();
 
-    std::println("Window opened – should be blue. Close it to exit.");
+    std::println("Window opened. Close it to exit.");
 
     // ----- 6. Event loop (keep window open) -----
     while (!glfwWindowShouldClose(window)) {
       glfwPollEvents();
-      glfwWaitEventsTimeout(0.001);
+      glfwWaitEventsTimeout(0.016);
     }
 
     windowInfo.reset();
