@@ -220,6 +220,23 @@ if((ENABLE_TESTS AND PROJECT_IS_TOP_LEVEL) OR FSC_TESTS)
 endif()
 
 # ==============================================================================
+# Copy Assets to Build Directory
+# ==============================================================================
+
+if(NOT EXISTS "${CMAKE_SOURCE_DIR}/assets")
+    file(MAKE_DIRECTORY "${CMAKE_SOURCE_DIR}/assets")
+endif()
+
+add_custom_target(copy_assets ALL
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/assets
+        ${OUTPUT_DIR}/assets
+    COMMENT "Copying assets to build directory"
+)
+
+add_dependencies(${PROJECT_NAME} copy_assets)
+
+# ==============================================================================
 # Installation
 # ==============================================================================
 install(TARGETS ${PROJECT_NAME}

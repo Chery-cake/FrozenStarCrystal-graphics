@@ -4,7 +4,7 @@ module;
 
 #include "FrozenStarCrystal-graphics_export.h"
 
-export module graphics.vulkan.devices:info;
+export module graphics.vulkan.devices:structs;
 
 import std.compat;
 import vulkan;

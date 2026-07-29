@@ -6,7 +6,7 @@ export module graphics.vulkan.devices:manager;
 
 import std.compat;
 
-import :info;
+import :structs;
 import :device;
 
 export namespace graphics::vulkan::devices {

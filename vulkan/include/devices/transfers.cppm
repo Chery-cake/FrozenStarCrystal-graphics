@@ -5,7 +5,7 @@ export module graphics.vulkan.devices:transfers;
 import std.compat;
 import vulkan;
 
-import :info;
+import :structs;
 import :device;
 import :swapchain;
 

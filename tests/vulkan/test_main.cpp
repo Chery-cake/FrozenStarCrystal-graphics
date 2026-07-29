@@ -45,6 +45,8 @@ int main() {
     std::println("Selected GPU: {} (score: {})", bestEntry.info.name,
                  bestEntry.score);
 
+    graphics::vulkan::shaders::Manager shadersMan;
+
     // ----- 4. Create surface & attach swapchain -----
     VkSurfaceKHR cSurface;
     if (glfwCreateWindowSurface(**instancePtr, window, nullptr, &cSurface) !=

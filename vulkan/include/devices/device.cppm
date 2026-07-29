@@ -8,7 +8,7 @@ import std.compat;
 import vulkan;
 import vk_mem_alloc;
 
-import :info;
+import :structs;
 import :swapchain;
 
 namespace graphics::vulkan::devices {

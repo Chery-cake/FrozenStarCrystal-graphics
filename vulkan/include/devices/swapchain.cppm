@@ -7,7 +7,7 @@ export module graphics.vulkan.devices:swapchain;
 import std.compat;
 import vulkan;
 
-import :info;
+import :structs;
 
 export namespace graphics::vulkan::devices {
 

@@ -8,8 +8,17 @@ set(TEST_OUTPUT_DIR "${OUTPUT_DIR}/tests")
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/tests_libs.cmake)
 
+message(WARNING "dir: ${CMAKE_SOURCE_DIR}")
+
+add_custom_target(copy_assets_test ALL
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/assets
+        ${TEST_OUTPUT_DIR}/assets
+    COMMENT "Copying assets to build directory"
+)
+
 function(add_tests_from_folder FOLDER)
-    set(multiValueArgs LIBRARY)
+    set(multiValueArgs LIBRARY DEPENDENCY)
     cmake_parse_arguments(ARG "" "" "${multiValueArgs}" ${ARGN})
 
     file(GLOB test_files CONFIGURE_DEPENDS "${FOLDER}/test*.c*")
@@ -36,14 +45,17 @@ function(add_tests_from_folder FOLDER)
         target_compile_definitions(${TEST_EXE} PRIVATE
             $<$<CONFIG:Debug>:ENGINE_DEBUG>
         )
-        add_dependencies(${TEST_EXE} ${ARG_LIBRARY})
+        add_dependencies(${TEST_EXE} ${ARG_LIBRARY} ${ARG_DEPENDENCY})
         # Force assert() to remain active even in Release builds
         target_compile_options(${TEST_EXE} PRIVATE
             $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:GNU,Clang,AppleClang>>:-UNDEBUG>
             $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:MSVC>>:/UNDEBUG>
         )
 
-        add_test(NAME ${TEST_NAME} COMMAND ${TEST_EXE})
+        add_test(NAME ${TEST_NAME}
+            COMMAND ${TEST_EXE}
+            WORKING_DIRECTORY ${TEST_OUTPUT_DIR}
+        )
 
         if(SANITIZERS)
             enable_sanitizers_test_target(${TEST_NAME} ${TEST_EXE})
@@ -55,9 +67,8 @@ add_tests_from_folder("vulkan"
     LIBRARY
         ${MAIN_LIB}
         glfw
+    DEPENDENCY
+        copy_assets_test
 )
 
 message(STATUS "Tests configured successfully")
-
-
-
