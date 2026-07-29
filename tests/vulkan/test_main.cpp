@@ -1,4 +1,3 @@
-
 import graphics;
 
 import std.compat;
@@ -8,161 +7,288 @@ import vulkan;
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 
-#include <cstdio>
+#include <cstdlib>
 
+using namespace graphics::vulkan;
+
+// --- Shader definition --------------------------------------------------
+static shaders::Shader g_shader{
+    .entryPoints = {{"vertexMain", vk::ShaderStageFlagBits::eVertex},
+                    {"fragmentMain", vk::ShaderStageFlagBits::eFragment}},
+    .sourcePath = "main.slang"};
+
+// --- Helper to convert a VkResult into an exception ---------------------
+static void check(VkResult result, const char *msg) {
+  if (result != VK_SUCCESS)
+    throw std::runtime_error(msg);
+}
+
+// --- GLFW error callback -------------------------------------------------
+static void glfwError(int code, const char *description) {
+  std::cerr << "GLFW error (" << code << "): " << description << '\n';
+}
+
+// =========================================================================
 int main() {
-  // ----- 1. Initialise GLFW (Wayland) -----
-  // glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_X11);
-  if (!glfwInit()) {
-    std::println(stderr, "glfwInit failed");
-    return 1;
-  }
-  std::println("GLFW platform ID: {}",
-               glfwGetPlatform()); // may print odd value, ignore
+  try {
+    // 1. Initialise GLFW and create a window with no API
+    glfwSetErrorCallback(glfwError);
+    if (!glfwInit())
+      throw std::runtime_error("Failed to initialise GLFW");
 
-  glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-  GLFWwindow *window =
-      glfwCreateWindow(800, 600, "FSC Graphics Test", nullptr, nullptr);
-  if (!window) {
-    std::println(stderr, "Window creation failed");
-    glfwTerminate();
-    return 1;
-  }
-
-  {
-    // ----- 2. Create Vulkan instance (yours) -----
-    graphics::vulkan::instances::Instance inst;
-    auto instancePtr = inst.getInstancePtr();
-
-    // ----- 3. Enumerate GPUs, pick best -----
-    graphics::vulkan::devices::Manager manager(instancePtr);
-    auto devices = manager.getDeviceEntries();
-    if (devices.empty()) {
-      std::println(stderr, "No Vulkan-capable GPU found.");
-      return 1;
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    GLFWwindow *window =
+        glfwCreateWindow(800, 600, "Triangle Test", nullptr, nullptr);
+    if (!window) {
+      glfwTerminate();
+      throw std::runtime_error("Failed to create GLFW window");
     }
-    auto &bestEntry = devices.front();
-    std::println("Selected GPU: {} (score: {})", bestEntry.info.name,
-                 bestEntry.score);
 
-    graphics::vulkan::shaders::Manager shadersMan;
+    // Show the window (important on Wayland to get a valid surface size)
+    glfwShowWindow(window);
+    glfwPollEvents(); // let the window manager process the map event
 
-    // ----- 4. Create surface & attach swapchain -----
-    VkSurfaceKHR cSurface;
-    if (glfwCreateWindowSurface(**instancePtr, window, nullptr, &cSurface) !=
-        VK_SUCCESS) {
-      std::println(stderr, "Failed to create window surface");
-      return 1;
-    }
-    vk::raii::SurfaceKHR surface(*instancePtr, cSurface);
+    // 2. Create Vulkan instance (automatically adds required extensions)
+    instances::Instance vulkanInstance;
+    auto instancePtr = vulkanInstance.getInstancePtr();
 
-    auto windowInfo = std::make_shared<graphics::vulkan::devices::WindowInfo>();
-    windowInfo->surface =
-        std::make_unique<vk::raii::SurfaceKHR>(std::move(surface));
+    // 3. Create surface from the GLFW window
+    VkSurfaceKHR rawSurface;
+    check(glfwCreateWindowSurface(**instancePtr, window, nullptr, &rawSurface),
+          "Failed to create GLFW surface");
+    auto surface =
+        std::make_unique<vk::raii::SurfaceKHR>(*instancePtr, rawSurface);
+
+    // 4. Pick a device (the one with the highest score)
+    devices::Manager deviceManager(instancePtr);
+    auto entries = deviceManager.getDeviceEntries();
+    if (entries.empty())
+      throw std::runtime_error("No Vulkan device found");
+    auto &bestEntry = entries.front();
+    auto device = bestEntry.device;
+
+    // 5. Attach the surface to the device and create a swapchain
+    auto windowInfo = std::make_shared<devices::WindowInfo>();
+    windowInfo->surface = std::move(surface);
     windowInfo->instance = instancePtr;
 
-    uint32_t framesInFlight = 2;
-    graphics::vulkan::devices::Swapchain::SwapchainInfo swapInfo;
-    swapInfo.imageCount = 3;
-    swapInfo.vsync = true;
+    // Build swapchain info with the actual window size
+    int width, height;
+    glfwGetFramebufferSize(window, &width, &height);
 
-    swapInfo.imageUseFlags = vk::ImageUsageFlagBits::eColorAttachment |
-                             vk::ImageUsageFlagBits::eTransferDst;
+    devices::Swapchain::SwapchainInfo swapInfo;
+    swapInfo.extent = vk::Extent2D{static_cast<uint32_t>(width),
+                                   static_cast<uint32_t>(height)};
 
-    try {
-      bestEntry.device->createWindow(windowInfo, framesInFlight, swapInfo);
-    } catch (const std::exception &e) {
-      std::println(stderr, "Failed to create window/swapchain: {}", e.what());
-      return 1;
+    device->createWindow(windowInfo, 3, swapInfo); // 3 frames in flight
+
+    // 6. Shader compilation
+    shaders::Manager shaderManager;
+    auto vertexModule =
+        shaderManager.loadShader(&g_shader, device->getDevicePtr());
+    auto fragmentModule =
+        shaderManager.loadShader(&g_shader, device->getDevicePtr());
+    if (!vertexModule || !fragmentModule)
+      throw std::runtime_error("Shader compilation / loading failed");
+
+    // 7. Obtain swapchain details
+    auto swapchainData = windowInfo->swapchain->getSwapchainImageData(0);
+    if (!swapchainData)
+      throw std::runtime_error("Could not retrieve swapchain image data");
+    vk::Format colorFormat = swapchainData->format;
+
+    // 8. Render pass – one color attachment
+    vk::AttachmentDescription colorAttachment{{},
+                                              colorFormat,
+                                              vk::SampleCountFlagBits::e1,
+                                              vk::AttachmentLoadOp::eClear,
+                                              vk::AttachmentStoreOp::eStore,
+                                              vk::AttachmentLoadOp::eDontCare,
+                                              vk::AttachmentStoreOp::eDontCare,
+                                              vk::ImageLayout::eUndefined,
+                                              vk::ImageLayout::ePresentSrcKHR};
+    vk::AttachmentReference colorRef{0,
+                                     vk::ImageLayout::eColorAttachmentOptimal};
+    vk::SubpassDescription subpass{
+        {}, vk::PipelineBindPoint::eGraphics, 0, nullptr, 1, &colorRef};
+    vk::RenderPassCreateInfo renderPassInfo{
+        {}, 1, &colorAttachment, 1, &subpass};
+    auto renderPass =
+        vk::raii::RenderPass(*device->getDevicePtr(), renderPassInfo);
+
+    // 9. Framebuffers – use public API to avoid accessing private frames_
+    auto swapInfoCopy = windowInfo->swapchain->getinfo();
+    uint32_t imagesCount = swapInfoCopy.imageCount;
+    std::vector<std::unique_ptr<vk::raii::ImageView>>
+        swapchainImageViews; // keep alive
+    std::vector<vk::raii::Framebuffer> framebuffers;
+
+    for (uint32_t i = 0; i < imagesCount; ++i) {
+      auto sd = windowInfo->swapchain->getSwapchainImageData(i);
+      if (!sd)
+        continue;
+
+      vk::ImageViewCreateInfo viewInfo{swapInfoCopy.imageViewFlags,
+                                       sd->image,
+                                       swapInfoCopy.imageViewType,
+                                       sd->format,
+                                       swapInfoCopy.imageViewComponents,
+                                       swapInfoCopy.imageViewSubresourceRange};
+      auto imageView = std::make_unique<vk::raii::ImageView>(
+          *device->getDevicePtr(), viewInfo);
+
+      vk::ImageView attachments[] = {**imageView};
+      vk::FramebufferCreateInfo fbInfo{
+          {}, *renderPass, 1, attachments, sd->extent.width, sd->extent.height,
+          1};
+      framebuffers.emplace_back(*device->getDevicePtr(), fbInfo);
+      swapchainImageViews.push_back(std::move(imageView));
     }
 
-    // ----- 5. Show the window with one clear‑to‑blue frame -----
-    auto &swapchain = *windowInfo->swapchain;
+    // 10. Pipeline layout (empty for this simple shader)
+    vk::PipelineLayoutCreateInfo layoutInfo{};
+    auto pipelineLayout =
+        vk::raii::PipelineLayout(*device->getDevicePtr(), layoutInfo);
 
-    auto imageIndex = swapchain.acquireNextImage();
-    if (!imageIndex.has_value()) {
-      std::println(stderr, "Failed to acquire first image: {}",
-                   imageIndex.error().message);
-      return 1;
+    // 11. Graphics pipeline
+    vk::PipelineShaderStageCreateInfo vertexStage{
+        {}, vk::ShaderStageFlagBits::eVertex, **vertexModule, "vertexMain"};
+    vk::PipelineShaderStageCreateInfo fragmentStage{
+        {},
+        vk::ShaderStageFlagBits::eFragment,
+        **fragmentModule,
+        "fragmentMain"};
+    std::vector<vk::PipelineShaderStageCreateInfo> stages = {vertexStage,
+                                                             fragmentStage};
+
+    vk::PipelineVertexInputStateCreateInfo vertexInput{
+        {}, 0, nullptr, 0, nullptr};
+    vk::PipelineInputAssemblyStateCreateInfo inputAssembly{
+        {}, vk::PrimitiveTopology::eTriangleList, false};
+    vk::PipelineViewportStateCreateInfo viewportState{
+        {}, 1, nullptr, 1, nullptr};
+    vk::PipelineRasterizationStateCreateInfo rasterizer{
+        {},
+        false,
+        false,
+        vk::PolygonMode::eFill,
+        vk::CullModeFlagBits::eNone,
+        vk::FrontFace::eCounterClockwise,
+        false,
+        0.0f,
+        0.0f,
+        0.0f,
+        1.0f};
+    vk::PipelineMultisampleStateCreateInfo multisample{
+        {}, vk::SampleCountFlagBits::e1, false};
+    vk::PipelineColorBlendAttachmentState blendAttachment{};
+    blendAttachment.colorWriteMask =
+        vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
+        vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
+    vk::PipelineColorBlendStateCreateInfo colorBlend{
+        {}, false, vk::LogicOp::eCopy, 1, &blendAttachment};
+    vk::DynamicState dynamicStates[] = {vk::DynamicState::eViewport,
+                                        vk::DynamicState::eScissor};
+    vk::PipelineDynamicStateCreateInfo dynamicState{{}, 2, dynamicStates};
+
+    vk::GraphicsPipelineCreateInfo pipelineInfo{{},
+                                                stages,
+                                                &vertexInput,
+                                                &inputAssembly,
+                                                nullptr,
+                                                &viewportState,
+                                                &rasterizer,
+                                                &multisample,
+                                                nullptr,
+                                                &colorBlend,
+                                                &dynamicState,
+                                                *pipelineLayout,
+                                                *renderPass,
+                                                0};
+    auto pipeline =
+        vk::raii::Pipeline(*device->getDevicePtr(), nullptr, pipelineInfo);
+
+    // 12. Command buffers – one per framebuffer
+    auto &cmdPool = device->getGraphicsPool();
+    cmdPool.allocate(imagesCount);
+    std::vector<vk::CommandBuffer> commandBuffers;
+    for (uint32_t i = 0; i < imagesCount; ++i)
+      commandBuffers.push_back(*cmdPool.buffers[i]);
+
+    for (uint32_t i = 0; i < imagesCount; ++i) {
+      vk::CommandBuffer cmd = commandBuffers[i];
+      vk::CommandBufferBeginInfo beginInfo{};
+      cmd.begin(beginInfo);
+
+      vk::ClearValue clearColor{std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f}};
+      vk::RenderPassBeginInfo rpInfo{*renderPass, *framebuffers[i],
+                                     vk::Rect2D{{0, 0}, swapchainData->extent},
+                                     1, &clearColor};
+      cmd.beginRenderPass(rpInfo, vk::SubpassContents::eInline);
+      cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline);
+
+      vk::Viewport viewport{0.0f,
+                            0.0f,
+                            static_cast<float>(swapchainData->extent.width),
+                            static_cast<float>(swapchainData->extent.height),
+                            0.0f,
+                            1.0f};
+      cmd.setViewport(0, viewport);
+      cmd.setScissor(0, vk::Rect2D{{0, 0}, swapchainData->extent});
+
+      cmd.draw(3, 1, 0, 0);
+      cmd.endRenderPass();
+      cmd.end();
     }
-    auto imageData = swapchain.getSwapchainImageData(*imageIndex);
-    if (!imageData.has_value()) {
-      std::println(stderr, "Failed to get swapchain image data");
-      return 1;
-    }
 
-    auto &pool = bestEntry.device->getGraphicsPool();
-    pool.allocate(1);
-    auto &cmd = pool.buffers.front();
-
-    vk::CommandBufferBeginInfo beginInfo{
-        vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
-    cmd.begin(beginInfo);
-
-    vk::ImageSubresourceRange subresource{vk::ImageAspectFlagBits::eColor, 0, 1,
-                                          0, 1};
-
-    // 1. Transition from Undefined to Transfer Dst (valid because usage
-    // includes eTransferDst)
-    vk::ImageMemoryBarrier barrier{vk::AccessFlagBits::eNone,
-                                   vk::AccessFlagBits::eTransferWrite,
-                                   vk::ImageLayout::eUndefined,
-                                   vk::ImageLayout::eTransferDstOptimal,
-                                   vk::QueueFamilyIgnored,
-                                   vk::QueueFamilyIgnored,
-                                   imageData->image,
-                                   subresource};
-    cmd.pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe,
-                        vk::PipelineStageFlagBits::eTransfer,
-                        vk::DependencyFlags{}, {}, {}, barrier);
-
-    // 2. Clear the image (blue – R=0, G=0, B=1, A=1)
-    vk::ClearColorValue clearColor{
-        std::array<float, 4>{0.0f, 0.0f, 1.0f, 1.0f}};
-    cmd.clearColorImage(barrier.image, vk::ImageLayout::eTransferDstOptimal,
-                        clearColor, subresource);
-
-    // 3. Transition from Transfer Dst to Present
-    barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
-    barrier.dstAccessMask = vk::AccessFlagBits::eMemoryRead;
-    barrier.oldLayout = vk::ImageLayout::eTransferDstOptimal;
-    barrier.newLayout = vk::ImageLayout::ePresentSrcKHR;
-    cmd.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
-                        vk::PipelineStageFlagBits::eBottomOfPipe,
-                        vk::DependencyFlags{}, {}, {}, barrier);
-
-    cmd.end();
-
-    // Submit & present
-    vk::SubmitInfo submitInfo;
-    submitInfo.setCommandBuffers(*cmd);
-    std::vector<vk::SubmitInfo> submits = {submitInfo};
-
-    auto presentResult = swapchain.submitAndPresent(
-        bestEntry.device->getGraphicsQueue(), submits, *imageIndex);
-    if (!presentResult.has_value()) {
-      std::println(stderr, "Present failed: {}", presentResult.error().message);
-      return 1;
-    }
-
-    bestEntry.device->waitIdle();
-    pool.reset();
-
-    std::println("Window opened. Close it to exit.");
-
-    // ----- 6. Event loop (keep window open) -----
+    // 13. Main loop
+    vk::Queue graphicsQueue = device->getGraphicsQueue();
     while (!glfwWindowShouldClose(window)) {
       glfwPollEvents();
-      glfwWaitEventsTimeout(0.016);
+
+      if (windowInfo->swapchain->needRecreation()) {
+        int w, h;
+        glfwGetFramebufferSize(window, &w, &h);
+        windowInfo->swapchain->recreateSwapchain(w, h);
+        // (recreation of framebuffers/command buffers is omitted
+        //  for brevity – you would do it in a full application)
+      }
+
+      auto acquireResult = windowInfo->swapchain->acquireNextImage();
+      if (!acquireResult) {
+        if (acquireResult.error().code ==
+            devices::Swapchain::PresentError::Code::outOfDate)
+          continue;
+        throw std::runtime_error(acquireResult.error().message);
+      }
+      uint32_t imageIndex = *acquireResult;
+
+      vk::SubmitInfo submit{};
+      submit.setCommandBuffers(commandBuffers[imageIndex]);
+      auto presentResult = windowInfo->swapchain->submitAndPresent(
+          graphicsQueue, std::span<vk::SubmitInfo>(&submit, 1), imageIndex);
+      if (!presentResult) {
+        std::cerr << "Present error: " << presentResult.error().message << '\n';
+      }
     }
 
-    windowInfo.reset();
+    // 14. Cleanup – destroy Vulkan resources that depend on the window
+    //     BEFORE the window is destroyed
+    device->waitIdle();
+
+    // Remove the window (destroys swapchain & surface)
+    device->removeWindow(windowInfo);
+    windowInfo.reset(); // make sure shared_ptr releases
+
+    // Now it's safe to destroy the GLFW window
+    glfwDestroyWindow(window);
+    glfwTerminate();
+
+    // deviceManager and other locals will now clean up safely
+    return EXIT_SUCCESS;
+
+  } catch (const std::exception &e) {
+    std::cerr << "Fatal error: " << e.what() << '\n';
+    return EXIT_FAILURE;
   }
-
-  // Cleanup
-  glfwDestroyWindow(window);
-  glfwTerminate();
-
-  std::println("Test completed.");
-  return 0;
 }

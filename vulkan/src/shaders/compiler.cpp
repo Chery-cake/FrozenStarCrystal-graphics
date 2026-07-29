@@ -40,29 +40,6 @@ std::filesystem::path getExecutableDir() {
 #endif
 }
 
-slang::SessionDesc
-setSessionDesc(std::vector<std::filesystem::path> &includePaths,
-               const Slang::ComPtr<slang::IGlobalSession> &globalSession) {
-  auto paths =
-      includePaths |
-      std::views::transform([](const std::string &s) { return s.c_str(); }) |
-      std::ranges::to<std::vector<const char *>>();
-
-  slang::TargetDesc targetDesc;
-  targetDesc.format = SLANG_SPIRV;
-  targetDesc.profile = globalSession->findProfile("spirv_1_5");
-  targetDesc.flags = SLANG_TARGET_FLAG_GENERATE_SPIRV_DIRECTLY;
-
-  slang::SessionDesc sessionDesc;
-  sessionDesc.targets = &targetDesc;
-  sessionDesc.targetCount = 1;
-  sessionDesc.searchPaths = paths.data();
-  sessionDesc.searchPathCount = static_cast<SlangInt>(includePaths.size());
-  sessionDesc.defaultMatrixLayoutMode = SLANG_MATRIX_LAYOUT_COLUMN_MAJOR;
-
-  return sessionDesc;
-}
-
 } // namespace
 
 Compiler::Compiler() {
@@ -95,186 +72,228 @@ Compiler::compile(const Shader &shader) {
 
   std::unique_lock lock(mtx_);
 
-  Slang::ComPtr<slang::ISession> session;
-
-  slang::SessionDesc sessionDesc =
-      setSessionDesc(includePaths_, globalSession());
-
-  globalSession()->createSession(sessionDesc, session.writeRef());
-
-  if (session.get() == nullptr) {
-    return std::unexpected<CompilerError>(
-        {.code = CompilerError::Code::sessionNotCreated,
-         .message = "Slang session wasn't able to be created \n"});
-  }
-
-  if (!std::filesystem::exists(shader.sourcePath)) {
-    return std::unexpected<CompilerError>(
-        {.code = CompilerError::Code::fileNotFound,
-         .message =
-             "Shader file doesn't exist on path: " + shader.sourcePath + '\n'});
-  }
-  std::string pathNormalized =
-      std::filesystem::path(shader.sourcePath).lexically_normal();
-
-  Slang::ComPtr<slang::IBlob> diagnosticsBlob;
-  Slang::ComPtr<slang::IModule> module;
-  module.attach(
-      session->loadModule(pathNormalized.c_str(), diagnosticsBlob.writeRef()));
-
-  if (module.get() == nullptr) {
-    std::string message;
-    if (diagnosticsBlob != nullptr) {
-      message = static_cast<const char *>(diagnosticsBlob->getBufferPointer());
-    } else {
-      message = "Failed to load module: " + pathNormalized;
-    }
-    return std::unexpected<CompilerError>(
-        {.code = CompilerError::Code::moduleFailedToLoad,
-         .message = message + '\n'});
-  }
-
-  std::vector<Slang::ComPtr<slang::IEntryPoint>> entryPoints;
   try {
-    std::ranges::for_each(shader.entryPoints, [&entryPoints,
-                                               &module](const auto &ep) {
-      Slang::ComPtr<slang::IEntryPoint> entry;
-      SlangResult findResult =
-          module->findEntryPointByName(ep.entry.c_str(), entry.writeRef());
 
-      if (SLANG_FAILED(findResult) || entry.get() == nullptr) {
-        // Try with explicit stage if not marked in source
-        Slang::ComPtr<slang::IBlob> epDiagnostics;
-        findResult = module->findAndCheckEntryPoint(
-            ep.entry.c_str(), vkStageBitToSlangStage(ep.type), entry.writeRef(),
-            epDiagnostics.writeRef());
+    Slang::ComPtr<slang::ISession> session;
+
+    auto paths = includePaths_ |
+                 std::views::transform(
+                     [](const std::filesystem::path &p) { return p.c_str(); }) |
+                 std::ranges::to<std::vector<const char *>>();
+
+    slang::TargetDesc targetDesc;
+    targetDesc.format = SLANG_SPIRV;
+    targetDesc.profile = globalSession()->findProfile("spirv_1_5");
+    targetDesc.flags = SLANG_TARGET_FLAG_GENERATE_SPIRV_DIRECTLY;
+
+    slang::SessionDesc sessionDesc;
+    sessionDesc.targets = &targetDesc;
+    sessionDesc.targetCount = 1;
+    sessionDesc.searchPaths = paths.data();
+    sessionDesc.searchPathCount = static_cast<SlangInt>(paths.size());
+    sessionDesc.defaultMatrixLayoutMode = SLANG_MATRIX_LAYOUT_COLUMN_MAJOR;
+
+    globalSession()->createSession(sessionDesc, session.writeRef());
+
+    if (session.get() == nullptr) {
+      return std::unexpected<CompilerError>(
+          {.code = CompilerError::Code::sessionNotCreated,
+           .message = "Slang session wasn't able to be created \n"});
+    }
+
+    std::filesystem::path file = shader.sourcePath;
+    if (!std::filesystem::exists(shader.sourcePath)) {
+
+      auto it = std::ranges::find_if(includePaths_, [&file](const auto &p) {
+        return std::filesystem::exists(p / file);
+      });
+
+      if (it != includePaths_.end()) {
+        file = *it / file;
+
+      } else {
+
+        return std::unexpected<CompilerError>(
+            {.code = CompilerError::Code::fileNotFound,
+             .message = "Shader file doesn't exist on path: " +
+                        shader.sourcePath + '\n'});
+      }
+    }
+    std::string pathNormalized = file.lexically_normal();
+
+    Slang::ComPtr<slang::IBlob> diagnosticsBlob;
+    slang::IModule *module =
+        session->loadModule(pathNormalized.c_str(), diagnosticsBlob.writeRef());
+
+    if (module == nullptr) {
+      std::string message;
+      if (diagnosticsBlob != nullptr) {
+        message =
+            static_cast<const char *>(diagnosticsBlob->getBufferPointer());
+      } else {
+        message = "Failed to load module: " + pathNormalized;
+      }
+      return std::unexpected<CompilerError>(
+          {.code = CompilerError::Code::moduleFailedToLoad,
+           .message = message + '\n'});
+    }
+
+    std::vector<Slang::ComPtr<slang::IEntryPoint>> entryPoints;
+    try {
+      std::ranges::for_each(shader.entryPoints, [&entryPoints,
+                                                 &module](const auto &ep) {
+        Slang::ComPtr<slang::IEntryPoint> entry;
+        SlangResult findResult =
+            module->findEntryPointByName(ep.entry.c_str(), entry.writeRef());
 
         if (SLANG_FAILED(findResult) || entry.get() == nullptr) {
-          throw std::runtime_error("Entry point not found: " + ep.entry + '\n');
+          // Try with explicit stage if not marked in source
+          Slang::ComPtr<slang::IBlob> epDiagnostics;
+          findResult = module->findAndCheckEntryPoint(
+              ep.entry.c_str(), vkStageBitToSlangStage(ep.type),
+              entry.writeRef(), epDiagnostics.writeRef());
+
+          if (SLANG_FAILED(findResult) || entry.get() == nullptr) {
+            throw std::runtime_error("Entry point not found: " + ep.entry +
+                                     '\n');
+          }
         }
+        entryPoints.push_back(std::move(entry));
+      });
+    } catch (const std::runtime_error &e) {
+      return std::unexpected<CompilerError>(
+          {.code = CompilerError::Code::entryNotFound, .message = e.what()});
+    }
+
+    std::vector<slang::IComponentType *> components;
+    components.push_back(module);
+    std::ranges::transform(entryPoints, std::back_inserter(components),
+                           [](const auto &ep) { return ep; });
+
+    Slang::ComPtr<slang::IComponentType> composedProgram;
+    SlangResult composeResult = session->createCompositeComponentType(
+        components.data(), static_cast<SlangInt>(components.size()),
+        composedProgram.writeRef(), diagnosticsBlob.writeRef());
+
+    if (SLANG_FAILED(composeResult)) {
+      std::string message;
+      if (diagnosticsBlob != nullptr) {
+        message =
+            static_cast<const char *>(diagnosticsBlob->getBufferPointer());
+      } else {
+        message = "Failed to compose shader program";
       }
-      entryPoints.push_back(std::move(entry));
-    });
-  } catch (const std::runtime_error &e) {
-    return std::unexpected<CompilerError>(
-        {.code = CompilerError::Code::entryNotFound, .message = e.what()});
-  }
-
-  std::vector<slang::IComponentType *> components;
-  components.push_back(module);
-  std::ranges::transform(entryPoints, std::back_inserter(components),
-                         [](const auto &ep) { return ep; });
-
-  Slang::ComPtr<slang::IComponentType> composedProgram;
-  SlangResult composeResult = session->createCompositeComponentType(
-      components.data(), static_cast<SlangInt>(components.size()),
-      composedProgram.writeRef(), diagnosticsBlob.writeRef());
-
-  if (SLANG_FAILED(composeResult)) {
-    std::string message;
-    if (diagnosticsBlob != nullptr) {
-      message = static_cast<const char *>(diagnosticsBlob->getBufferPointer());
-    } else {
-      message = "Failed to compose shader program";
+      return std::unexpected<CompilerError>(
+          {.code = CompilerError::Code::failedToComposeShader,
+           .message = message + '\n'});
     }
-    return std::unexpected<CompilerError>(
-        {.code = CompilerError::Code::failedToComposeShader,
-         .message = message + '\n'});
-  }
 
-  // Link the program
-  Slang::ComPtr<slang::IComponentType> linkedProgram;
-  SlangResult linkResult = composedProgram->link(linkedProgram.writeRef(),
-                                                 diagnosticsBlob.writeRef());
+    // Link the program
+    Slang::ComPtr<slang::IComponentType> linkedProgram;
+    SlangResult linkResult = composedProgram->link(linkedProgram.writeRef(),
+                                                   diagnosticsBlob.writeRef());
 
-  if (SLANG_FAILED(linkResult)) {
-    std::string message;
-    if (diagnosticsBlob.get() != nullptr) {
-      message = static_cast<const char *>(diagnosticsBlob->getBufferPointer());
-    } else {
-      message = "Failed to link shader program";
+    if (SLANG_FAILED(linkResult)) {
+      std::string message;
+      if (diagnosticsBlob.get() != nullptr) {
+        message =
+            static_cast<const char *>(diagnosticsBlob->getBufferPointer());
+      } else {
+        message = "Failed to link shader program";
+      }
+      return std::unexpected<CompilerError>(
+          {.code = CompilerError::Code::failedToLinkShaders,
+           .message = message + '\n'});
     }
-    return std::unexpected<CompilerError>(
-        {.code = CompilerError::Code::failedToLinkShaders,
-         .message = message + '\n'});
-  }
 
-  // Get compiled SPIR-V code
-  Slang::ComPtr<slang::IBlob> codeBlob;
+    // Get compiled SPIR-V code
+    Slang::ComPtr<slang::IBlob> codeBlob;
 
-  SlangResult codeResult = linkedProgram->getTargetCode(
-      0, codeBlob.writeRef(), diagnosticsBlob.writeRef());
+    SlangResult codeResult = linkedProgram->getTargetCode(
+        0, codeBlob.writeRef(), diagnosticsBlob.writeRef());
 
-  if (SLANG_FAILED(codeResult) || codeBlob.get() == nullptr) {
-    std::string message;
-    if (diagnosticsBlob != nullptr) {
-      message = static_cast<const char *>(diagnosticsBlob->getBufferPointer());
-    } else {
-      message = "Failed to get SPIR-V code";
+    if (SLANG_FAILED(codeResult) || codeBlob.get() == nullptr) {
+      std::string message;
+      if (diagnosticsBlob != nullptr) {
+        message =
+            static_cast<const char *>(diagnosticsBlob->getBufferPointer());
+      } else {
+        message = "Failed to get SPIR-V code";
+      }
+      return std::unexpected<CompilerError>(
+          {.code = CompilerError::Code::failedToGetSPIRV,
+           .message = message + '\n'});
     }
-    return std::unexpected<CompilerError>(
-        {.code = CompilerError::Code::failedToGetSPIRV,
-         .message = message + '\n'});
+
+    // Validate and copy SPIR-V
+    size_t codeSize = codeBlob->getBufferSize();
+    if (codeSize == 0 || codeSize % sizeof(uint32_t) != 0) {
+      return std::unexpected<CompilerError>(
+          {.code = CompilerError::Code::invalidCodeSize,
+           .message = "Invalid SPIR-V code size \n"});
+    }
+
+    std::filesystem::path outDir = file.parent_path() / "compiled";
+
+    std::error_code ec;
+    std::filesystem::create_directories(outDir, ec);
+    if (ec) {
+      return std::unexpected(CompilerError{
+          .code = CompilerError::Code::fileNotFound,
+          .message = "Could not create output directory: " + outDir.string()});
+    }
+
+    // Output file: same stem, .spv extension
+    std::filesystem::path outPath =
+        outDir / std::filesystem::path(shader.sourcePath).filename();
+    outPath.replace_extension(".spv");
+
+    std::ofstream outFile(outPath, std::ios::binary);
+    if (!outFile) {
+      return std::unexpected(CompilerError{
+          .code = CompilerError::Code::fileNotFound,
+          .message = "Could not open output file: " + outPath.string()});
+    }
+
+    outFile.write(static_cast<const char *>(codeBlob->getBufferPointer()),
+                  static_cast<std::streamsize>(codeSize));
+    outFile.close();
+
+    return outPath.string();
+  } catch (const std::exception &e) {
+    return std::unexpected(
+        CompilerError{.code = CompilerError::Code::unexpectedError,
+                      .message = std::string("Exception: ") + e.what()});
+  } catch (...) {
+    return std::unexpected(
+        CompilerError{.code = CompilerError::Code::unexpectedError,
+                      .message = "Unknown exception during compilation"});
   }
-
-  // Validate and copy SPIR-V
-  size_t codeSize = codeBlob->getBufferSize();
-  if (codeSize == 0 || codeSize % sizeof(uint32_t) != 0) {
-    return std::unexpected<CompilerError>(
-        {.code = CompilerError::Code::invalidCodeSize,
-         .message = "Invalid SPIR-V code size \n"});
-  }
-
-  std::filesystem::path outDir =
-      std::filesystem::path(shader.sourcePath).parent_path() / "compiled";
-
-  std::error_code ec;
-  std::filesystem::create_directories(outDir, ec);
-  if (ec) {
-    return std::unexpected(CompilerError{
-        .code = CompilerError::Code::fileNotFound,
-        .message = "Could not create output directory: " + outDir.string()});
-  }
-
-  // Output file: same stem, .spv extension
-  std::filesystem::path outPath =
-      outDir / std::filesystem::path(shader.sourcePath).filename();
-  outPath.replace_extension(".spv");
-
-  std::ofstream outFile(outPath, std::ios::binary);
-  if (!outFile) {
-    return std::unexpected(CompilerError{
-        .code = CompilerError::Code::fileNotFound,
-        .message = "Could not open output file: " + outPath.string()});
-  }
-
-  outFile.write(static_cast<const char *>(codeBlob->getBufferPointer()),
-                static_cast<std::streamsize>(codeSize));
-  outFile.close();
-
-  return outPath.string();
 }
 
 std::string Compiler::getBinary(const Shader &shader) {
-  std::unique_lock lock(mtx_);
 
   std::filesystem::path compDir =
       std::filesystem::path(shader.sourcePath).parent_path() / "compiled";
+  std::filesystem::path file =
+      compDir / std::filesystem::path(shader.sourcePath).filename();
+  file.replace_extension(".spv");
 
-  if (std::filesystem::exists(compDir)) {
-    std::filesystem::path file =
-        compDir / std::filesystem::path(shader.sourcePath).filename();
-    file.replace_extension(".spv");
+  {
+    std::unique_lock lock(mtx_);
+
     if (std::filesystem::exists(file)) {
+
       return file.string();
     }
   }
 
   auto comp = compile(shader);
 
-  if (!comp.has_value()) { // TODO deal with errors
+  if (!comp) { // TODO deal with errors
+    throw std::runtime_error(comp.error().message);
   }
-  return comp.value();
+  return *comp;
 }
 
 bool Compiler::askRecompile(const Shader &shader) {

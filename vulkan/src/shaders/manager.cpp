@@ -18,7 +18,7 @@ Manager::~Manager() {
 
   compiler_.reset();
 
-  std::cout << "[Manager] cleared \n";
+  std::cout << "[Manager] Cleared \n";
 }
 
 deviceModuleRegistry &
@@ -39,22 +39,26 @@ Manager::getDeviceRegistry(const std::shared_ptr<vk::raii::Device> &device) {
 std::expected<std::shared_ptr<vk::raii::ShaderModule>, ShaderError>
 Manager::loadShader(const Shader *tag,
                     const std::shared_ptr<vk::raii::Device> &device) {
-  std::shared_lock lock(deviceMtx_);
+  {
+    std::shared_lock lock(deviceMtx_);
 
-  // 1. Ensure the shader is compiled (global cache)
-  if (!shaderModuleRegistry_.contains(tag)) {
-    // Compile and store (emplace constructs ShaderModule with the tag and a
-    // lambda)
-    auto result = shaderModuleRegistry_.emplace(
-        tag, [&compiler = compiler_](const Shader &s) {
-          return compiler->getBinary(s);
-        });
-    if (!result) {
-      return std::unexpected(
-          ShaderError{.code = ShaderError::Code::creationFailed,
-                      .message = "Failed to emplace compiled shader"});
+    // 1. Ensure the shader is compiled (global cache)
+    if (!shaderModuleRegistry_.contains(tag)) {
+      lock.unlock();
+
+      auto result = shaderModuleRegistry_.emplace(
+          tag, [&compiler = compiler_](const Shader &s) {
+            return compiler->getBinary(s);
+          });
+
+      if (!result) {
+        return std::unexpected(
+            ShaderError{.code = ShaderError::Code::creationFailed,
+                        .message = "Failed to emplace compiled shader"});
+      }
     }
   }
+
   auto *compiledMod = shaderModuleRegistry_.get(tag); // returns ShaderModule*
 
   // 2. Check device cache

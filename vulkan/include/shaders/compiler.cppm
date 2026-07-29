@@ -24,6 +24,7 @@ public:
       failedToLinkShaders,
       failedToGetSPIRV,
       invalidCodeSize,
+      unexpectedError,
     } code;
     std::string message;
   };
@@ -33,7 +34,7 @@ private:
 
   std::vector<std::filesystem::path> includePaths_;
 
-  mutable std::mutex mtx_;
+  mutable std::recursive_mutex mtx_;
 
 public:
   Compiler();

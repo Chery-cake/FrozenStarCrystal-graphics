@@ -8,11 +8,13 @@ set(TEST_OUTPUT_DIR "${OUTPUT_DIR}/tests")
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/tests_libs.cmake)
 
-message(WARNING "dir: ${CMAKE_SOURCE_DIR}")
+if(NOT EXISTS "${CMAKE_SOURCE_DIR}/tests/assets")
+    file(MAKE_DIRECTORY "${CMAKE_SOURCE_DIR}/tests/assets")
+endif()
 
 add_custom_target(copy_assets_test ALL
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_SOURCE_DIR}/assets
+        ${CMAKE_SOURCE_DIR}/tests/assets
         ${TEST_OUTPUT_DIR}/assets
     COMMENT "Copying assets to build directory"
 )
@@ -72,3 +74,6 @@ add_tests_from_folder("vulkan"
 )
 
 message(STATUS "Tests configured successfully")
+
+
+
