@@ -84,7 +84,7 @@ QueueFamilyIndices findQueueFamilies(vk::PhysicalDevice device) {
   // TODO improve family selection
   std::ranges::for_each(
       queueFamilies | std::views::enumerate, [&indices](const auto &pair) {
-        auto [i, family] = pair;
+        auto &&[i, family] = pair;
 
         if (!indices.graphicsQueue &&
             (family.queueFlags & vk::QueueFlagBits::eGraphics)) {
@@ -160,7 +160,7 @@ std::vector<std::pair<GPUInfo, vk::PhysicalDevice>>
 enumeratePhysicalDevices(vk::raii::Instance *instance) {
   return instance->enumeratePhysicalDevices() | std::views::enumerate |
          std::views::transform([](const auto &pair) {
-           auto [i, physicalDevice] = pair;
+           auto &&[i, physicalDevice] = pair;
            GPUInfo info =
                queryDeviceInfo(physicalDevice, static_cast<uint32_t>(i));
            std::println("[Manager] Found GPU {}: {}", i, info.name);
@@ -182,7 +182,7 @@ Manager::Manager(const std::shared_ptr<vk::raii::Instance> &instance)
 
   std::ranges::for_each(infoDev, [&entries = deviceEntries_,
                                   &instance](const auto &pair) {
-    auto [info, physicalDevice] = pair;
+    auto &&[info, physicalDevice] = pair;
 
     auto device = std::make_shared<Device>(*instance, physicalDevice, info);
     auto phyDev =

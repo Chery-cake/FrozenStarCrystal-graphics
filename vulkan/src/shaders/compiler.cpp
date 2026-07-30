@@ -238,7 +238,7 @@ Compiler::compile(const Shader &shader) {
     std::error_code ec;
     std::filesystem::create_directories(outDir, ec);
     if (ec) {
-      return std::unexpected(CompilerError{
+      return std::unexpected<CompilerError>({
           .code = CompilerError::Code::fileNotFound,
           .message = "Could not create output directory: " + outDir.string()});
     }
@@ -250,7 +250,7 @@ Compiler::compile(const Shader &shader) {
 
     std::ofstream outFile(outPath, std::ios::binary);
     if (!outFile) {
-      return std::unexpected(CompilerError{
+      return std::unexpected<CompilerError>({
           .code = CompilerError::Code::fileNotFound,
           .message = "Could not open output file: " + outPath.string()});
     }
@@ -261,12 +261,10 @@ Compiler::compile(const Shader &shader) {
 
     return outPath.string();
   } catch (const std::exception &e) {
-    return std::unexpected(
-        CompilerError{.code = CompilerError::Code::unexpectedError,
+    return std::unexpected<CompilerError>({.code = CompilerError::Code::unexpectedError,
                       .message = std::string("Exception: ") + e.what()});
   } catch (...) {
-    return std::unexpected(
-        CompilerError{.code = CompilerError::Code::unexpectedError,
+    return std::unexpected<CompilerError>({.code = CompilerError::Code::unexpectedError,
                       .message = "Unknown exception during compilation"});
   }
 }

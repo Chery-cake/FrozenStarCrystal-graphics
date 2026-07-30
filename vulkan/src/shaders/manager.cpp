@@ -31,7 +31,7 @@ Manager::getDeviceRegistry(const std::shared_ptr<vk::raii::Device> &device) {
   lock.unlock();
 
   std::unique_lock writeLock(deviceMtx_);
-  auto [newIt, inserted] = deviceRegistries_.emplace(
+  auto &&[newIt, inserted] = deviceRegistries_.emplace(
       device, std::make_unique<deviceModuleRegistry>());
   return *newIt->second;
 }
@@ -52,8 +52,7 @@ Manager::loadShader(const Shader *tag,
           });
 
       if (!result) {
-        return std::unexpected(
-            ShaderError{.code = ShaderError::Code::creationFailed,
+        return std::unexpected<ShaderError>({.code = ShaderError::Code::creationFailed,
                         .message = "Failed to emplace compiled shader"});
       }
     }
@@ -71,7 +70,7 @@ Manager::loadShader(const Shader *tag,
   // 3. Create the device‑specific Vulkan module
   auto vkModResult = compiledMod->createModule(*device);
   if (!vkModResult) {
-    return std::unexpected(vkModResult.error());
+    return std::unexpected<ShaderError>(vkModResult.error());
   }
 
   // 4. Insert into device registry
@@ -105,7 +104,7 @@ void Manager::reloadShader(const Shader *tag) {
   // 2. Recreate modules for every device that has this shader
   std::shared_lock lock(deviceMtx_);
   std::ranges::for_each(deviceRegistries_, [&tag, &compiledMod](auto &pair) {
-    auto &[device, registry] = pair;
+    auto &&[device, registry] = pair;
 
     registry->remove(tag);
 

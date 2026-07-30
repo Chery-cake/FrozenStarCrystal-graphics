@@ -20,7 +20,7 @@ std::optional<uint32_t> findPresentQueue(vk::raii::SurfaceKHR *surface,
   auto view = queueFamilies | std::views::enumerate;
 
   auto it = std::ranges::find_if(view, [&surface, &device](const auto &pair) {
-    auto [i, family] = pair;
+    auto &&[i, family] = pair;
     return device->getSurfaceSupportKHR(static_cast<uint32_t>(i), *surface) !=
            0;
   });
@@ -420,7 +420,7 @@ CommandBufferPool &Device::getGraphicsPool() {
 
   auto pool = std::make_unique<CommandBufferPool>(
       device_, info_.queueFamilies.graphicsQueue.value());
-  auto [it, inserted] = graphicsPools_.emplace(tid, std::move(pool));
+  auto &&[it, inserted] = graphicsPools_.emplace(tid, std::move(pool));
   return *it->second;
 }
 
@@ -439,7 +439,7 @@ CommandBufferPool &Device::getComputePool() {
 
   auto pool = std::make_unique<CommandBufferPool>(
       device_, info_.queueFamilies.computeQueue.value());
-  auto [it, inserted] = computePools_.emplace(tid, std::move(pool));
+  auto &&[it, inserted] = computePools_.emplace(tid, std::move(pool));
   return *it->second;
 }
 
@@ -458,7 +458,7 @@ CommandBufferPool &Device::getTransferPool() {
 
   auto pool = std::make_unique<CommandBufferPool>(
       device_, info_.queueFamilies.transferQueue.value());
-  auto [it, inserted] = transferPools_.emplace(tid, std::move(pool));
+  auto &&[it, inserted] = transferPools_.emplace(tid, std::move(pool));
   return *it->second;
 }
 
@@ -477,7 +477,7 @@ CommandBufferPool &Device::getSparseBidingPool() {
 
   auto pool = std::make_unique<CommandBufferPool>(
       device_, info_.queueFamilies.sparseBindingQueue.value());
-  auto [it, inserted] = sparseBidingPools_.emplace(tid, std::move(pool));
+  auto &&[it, inserted] = sparseBidingPools_.emplace(tid, std::move(pool));
   return *it->second;
 }
 
@@ -496,7 +496,7 @@ CommandBufferPool &Device::getProtectedPool() {
 
   auto pool = std::make_unique<CommandBufferPool>(
       device_, info_.queueFamilies.protectedQueue.value());
-  auto [it, inserted] = protectedPools_.emplace(tid, std::move(pool));
+  auto &&[it, inserted] = protectedPools_.emplace(tid, std::move(pool));
   return *it->second;
 }
 

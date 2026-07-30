@@ -28,11 +28,11 @@ struct FROZENSTARCRYSTAL_GRAPHICS_API Shader {
 export namespace std {
 template <> struct hash<graphics::vulkan::shaders::Shader> {
 
-  inline static const size_t golden_ratio = 0x9e3779b9;
+  static constexpr size_t golden_ratio = 0x9e3779b9;
 
-  inline static const size_t buffer_size = 4096;
-  inline static const size_t mix_left = 6;
-  inline static const size_t mix_right = 2;
+  static constexpr size_t buffer_size = 4096;
+  static constexpr size_t mix_left = 6;
+  static constexpr size_t mix_right = 2;
 
   static std::size_t computeFileHash(const std::string &path) {
     try {
@@ -114,28 +114,25 @@ struct FROZENSTARCRYSTAL_GRAPHICS_API ShaderModule {
 
     // 1. Check file existence
     if (!std::filesystem::exists(compiledPath, ec)) {
-      return std::unexpected(
-          ShaderError{.code = ShaderError::Code::fileNotFound,
+      return std::unexpected<ShaderError>({.code = ShaderError::Code::fileNotFound,
                       .message = "Compiled shader not found: " + compiledPath});
     }
 
     // 2. Get size (replaces tellg/seekg)
     auto fileSize = std::filesystem::file_size(compiledPath, ec);
     if (ec) {
-      return std::unexpected(
-          ShaderError{.code = ShaderError::Code::fileNotFound,
+      return std::unexpected<ShaderError>({.code = ShaderError::Code::fileNotFound,
                       .message = "Failed to query size of: " + compiledPath});
     }
 
     // 3. Validate size constraints
     if (fileSize % sizeof(uint32_t) != 0) {
-      return std::unexpected(ShaderError{
+      return std::unexpected<ShaderError>({
           .code = ShaderError::Code::wrongSizeMultiplier,
           .message = "Compiled shader size not a multiple of 4 bytes"});
     }
     if (fileSize == 0) {
-      return std::unexpected(
-          ShaderError{.code = ShaderError::Code::noFileSize,
+      return std::unexpected<ShaderError>({.code = ShaderError::Code::noFileSize,
                       .message = "Compiled shader is empty"});
     }
 
@@ -144,7 +141,7 @@ struct FROZENSTARCRYSTAL_GRAPHICS_API ShaderModule {
     binary.resize(static_cast<std::size_t>(fileSize));
     std::ifstream file(compiledPath, std::ios::binary);
     if (!file.read(binary.data(), static_cast<std::streamsize>(fileSize))) {
-      return std::unexpected(ShaderError{
+      return std::unexpected<ShaderError>({
           .code = ShaderError::Code::fileNotFound,
           .message = "Failed to read compiled shader: " + compiledPath});
     }

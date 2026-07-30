@@ -82,14 +82,9 @@ int main() {
 
     device->createWindow(windowInfo, 3, swapInfo); // 3 frames in flight
 
-    // 6. Shader compilation
-    shaders::Manager shaderManager;
-    auto vertexModule =
-        shaderManager.loadShader(&g_shader, device->getDevicePtr());
-    auto fragmentModule =
-        shaderManager.loadShader(&g_shader, device->getDevicePtr());
-    if (!vertexModule || !fragmentModule)
-      throw std::runtime_error("Shader compilation / loading failed");
+    // 6. Shader & pipeline managers
+    auto shaderManager = std::make_shared<shaders::Manager>();
+    pipelines::Manager pipelineManager(shaderManager);
 
     // 7. Obtain swapchain details
     auto swapchainData = windowInfo->swapchain->getSwapchainImageData(0);
@@ -97,31 +92,38 @@ int main() {
       throw std::runtime_error("Could not retrieve swapchain image data");
     vk::Format colorFormat = swapchainData->format;
 
-    // 8. Render pass – one color attachment
-    vk::AttachmentDescription colorAttachment{{},
-                                              colorFormat,
-                                              vk::SampleCountFlagBits::e1,
-                                              vk::AttachmentLoadOp::eClear,
-                                              vk::AttachmentStoreOp::eStore,
-                                              vk::AttachmentLoadOp::eDontCare,
-                                              vk::AttachmentStoreOp::eDontCare,
-                                              vk::ImageLayout::eUndefined,
-                                              vk::ImageLayout::ePresentSrcKHR};
-    vk::AttachmentReference colorRef{0,
-                                     vk::ImageLayout::eColorAttachmentOptimal};
-    vk::SubpassDescription subpass{
-        {}, vk::PipelineBindPoint::eGraphics, 0, nullptr, 1, &colorRef};
-    vk::RenderPassCreateInfo renderPassInfo{
-        {}, 1, &colorAttachment, 1, &subpass};
-    auto renderPass =
-        vk::raii::RenderPass(*device->getDevicePtr(), renderPassInfo);
+    // 8. Create a simple pipeline layout (empty) for the dynamic pipeline
+    vk::PipelineLayoutCreateInfo layoutInfo{};
+    vk::raii::PipelineLayout pipelineLayout(*device->getDevicePtr(),
+                                            layoutInfo);
 
-    // 9. Framebuffers – use public API to avoid accessing private frames_
+    // 9. Build the dynamic pipeline info
+    pipelines::DynamicPipelineInfo dynamicInfo;
+    dynamicInfo.tag.shaderTag = &g_shader;
+    dynamicInfo.tag.layout = *pipelineLayout; // raw handle
+    dynamicInfo.tag.flags = {};
+    dynamicInfo.topology = vk::PrimitiveTopology::eTriangleList;
+    dynamicInfo.colorFormats = {colorFormat};
+    dynamicInfo.colorCount = 1;
+    dynamicInfo.depthFormat = vk::Format::eUndefined;
+    dynamicInfo.stencilFormat = vk::Format::eUndefined;
+    dynamicInfo.samples = vk::SampleCountFlagBits::e1;
+
+    // ** Fix back‑face culling and depth test **
+    dynamicInfo.cullMode = vk::CullModeFlagBits::eNone;
+    dynamicInfo.depthTest = false;
+
+    // 10. Get or create the dynamic pipeline
+    auto pipelineResult =
+        pipelineManager.getOrCreate(dynamicInfo, device->getDevicePtr());
+    if (!pipelineResult)
+      throw std::runtime_error("Failed to create dynamic pipeline");
+    auto pipeline = *pipelineResult;
+
+    // 11. Create image views for the swapchain images
     auto swapInfoCopy = windowInfo->swapchain->getinfo();
     uint32_t imagesCount = swapInfoCopy.imageCount;
-    std::vector<std::unique_ptr<vk::raii::ImageView>>
-        swapchainImageViews; // keep alive
-    std::vector<vk::raii::Framebuffer> framebuffers;
+    std::vector<std::unique_ptr<vk::raii::ImageView>> swapchainImageViews;
 
     for (uint32_t i = 0; i < imagesCount; ++i) {
       auto sd = windowInfo->swapchain->getSwapchainImageData(i);
@@ -134,81 +136,11 @@ int main() {
                                        sd->format,
                                        swapInfoCopy.imageViewComponents,
                                        swapInfoCopy.imageViewSubresourceRange};
-      auto imageView = std::make_unique<vk::raii::ImageView>(
-          *device->getDevicePtr(), viewInfo);
-
-      vk::ImageView attachments[] = {**imageView};
-      vk::FramebufferCreateInfo fbInfo{
-          {}, *renderPass, 1, attachments, sd->extent.width, sd->extent.height,
-          1};
-      framebuffers.emplace_back(*device->getDevicePtr(), fbInfo);
-      swapchainImageViews.push_back(std::move(imageView));
+      swapchainImageViews.push_back(std::make_unique<vk::raii::ImageView>(
+          *device->getDevicePtr(), viewInfo));
     }
 
-    // 10. Pipeline layout (empty for this simple shader)
-    vk::PipelineLayoutCreateInfo layoutInfo{};
-    auto pipelineLayout =
-        vk::raii::PipelineLayout(*device->getDevicePtr(), layoutInfo);
-
-    // 11. Graphics pipeline
-    vk::PipelineShaderStageCreateInfo vertexStage{
-        {}, vk::ShaderStageFlagBits::eVertex, **vertexModule, "vertexMain"};
-    vk::PipelineShaderStageCreateInfo fragmentStage{
-        {},
-        vk::ShaderStageFlagBits::eFragment,
-        **fragmentModule,
-        "fragmentMain"};
-    std::vector<vk::PipelineShaderStageCreateInfo> stages = {vertexStage,
-                                                             fragmentStage};
-
-    vk::PipelineVertexInputStateCreateInfo vertexInput{
-        {}, 0, nullptr, 0, nullptr};
-    vk::PipelineInputAssemblyStateCreateInfo inputAssembly{
-        {}, vk::PrimitiveTopology::eTriangleList, false};
-    vk::PipelineViewportStateCreateInfo viewportState{
-        {}, 1, nullptr, 1, nullptr};
-    vk::PipelineRasterizationStateCreateInfo rasterizer{
-        {},
-        false,
-        false,
-        vk::PolygonMode::eFill,
-        vk::CullModeFlagBits::eNone,
-        vk::FrontFace::eCounterClockwise,
-        false,
-        0.0f,
-        0.0f,
-        0.0f,
-        1.0f};
-    vk::PipelineMultisampleStateCreateInfo multisample{
-        {}, vk::SampleCountFlagBits::e1, false};
-    vk::PipelineColorBlendAttachmentState blendAttachment{};
-    blendAttachment.colorWriteMask =
-        vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
-        vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
-    vk::PipelineColorBlendStateCreateInfo colorBlend{
-        {}, false, vk::LogicOp::eCopy, 1, &blendAttachment};
-    vk::DynamicState dynamicStates[] = {vk::DynamicState::eViewport,
-                                        vk::DynamicState::eScissor};
-    vk::PipelineDynamicStateCreateInfo dynamicState{{}, 2, dynamicStates};
-
-    vk::GraphicsPipelineCreateInfo pipelineInfo{{},
-                                                stages,
-                                                &vertexInput,
-                                                &inputAssembly,
-                                                nullptr,
-                                                &viewportState,
-                                                &rasterizer,
-                                                &multisample,
-                                                nullptr,
-                                                &colorBlend,
-                                                &dynamicState,
-                                                *pipelineLayout,
-                                                *renderPass,
-                                                0};
-    auto pipeline =
-        vk::raii::Pipeline(*device->getDevicePtr(), nullptr, pipelineInfo);
-
-    // 12. Command buffers – one per framebuffer
+    // 12. Allocate command buffers and record dynamic rendering commands
     auto &cmdPool = device->getGraphicsPool();
     cmdPool.allocate(imagesCount);
     std::vector<vk::CommandBuffer> commandBuffers;
@@ -217,27 +149,87 @@ int main() {
 
     for (uint32_t i = 0; i < imagesCount; ++i) {
       vk::CommandBuffer cmd = commandBuffers[i];
+      auto &sd = swapInfoCopy; // extent, format
+      auto extent = vk::Extent2D{sd.extent.width, sd.extent.height};
+
+      // Retrieve the swapchain image handle for this index
+      auto imageData = windowInfo->swapchain->getSwapchainImageData(i);
+      if (!imageData)
+        continue;
+      vk::Image swapchainImage = imageData->image;
+
       vk::CommandBufferBeginInfo beginInfo{};
       cmd.begin(beginInfo);
 
-      vk::ClearValue clearColor{std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f}};
-      vk::RenderPassBeginInfo rpInfo{*renderPass, *framebuffers[i],
-                                     vk::Rect2D{{0, 0}, swapchainData->extent},
-                                     1, &clearColor};
-      cmd.beginRenderPass(rpInfo, vk::SubpassContents::eInline);
+      // Transition the image to COLOR_ATTACHMENT_OPTIMAL before rendering
+      vk::ImageMemoryBarrier preRenderBarrier{
+          vk::AccessFlagBits::eNone,                 // srcAccessMask (discard)
+          vk::AccessFlagBits::eColorAttachmentWrite, // dstAccessMask
+          vk::ImageLayout::eUndefined,               // oldLayout (discard)
+          vk::ImageLayout::eColorAttachmentOptimal,  // newLayout
+          VK_QUEUE_FAMILY_IGNORED,
+          VK_QUEUE_FAMILY_IGNORED,
+          swapchainImage,
+          vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, 1, 0,
+                                    1}};
+      cmd.pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe,
+                          vk::PipelineStageFlagBits::eColorAttachmentOutput,
+                          vk::DependencyFlags{}, {}, {}, preRenderBarrier);
+
+      // Dynamic rendering attachment
+      vk::RenderingAttachmentInfo colorAttachment{
+          **swapchainImageViews[i],                 // imageView
+          vk::ImageLayout::eColorAttachmentOptimal, // imageLayout
+          vk::ResolveModeFlagBits::eNone,
+          nullptr,                     // resolveImageView
+          vk::ImageLayout::eUndefined, // resolveImageLayout (unused)
+          vk::AttachmentLoadOp::eClear,
+          vk::AttachmentStoreOp::eStore,
+          vk::ClearValue{std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f}}};
+
+      vk::RenderingInfo renderingInfo{
+          {},                         // flags
+          vk::Rect2D{{0, 0}, extent}, // renderArea
+          1u,                         // layerCount
+          0u,                         // viewMask
+          1u,                         // colorAttachmentCount
+          &colorAttachment,
+          nullptr,
+          nullptr // depth, stencil
+      };
+
+      cmd.beginRendering(renderingInfo);
       cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline);
 
       vk::Viewport viewport{0.0f,
                             0.0f,
-                            static_cast<float>(swapchainData->extent.width),
-                            static_cast<float>(swapchainData->extent.height),
+                            static_cast<float>(extent.width),
+                            static_cast<float>(extent.height),
                             0.0f,
                             1.0f};
       cmd.setViewport(0, viewport);
-      cmd.setScissor(0, vk::Rect2D{{0, 0}, swapchainData->extent});
+      cmd.setScissor(0, vk::Rect2D{{0, 0}, extent});
 
       cmd.draw(3, 1, 0, 0);
-      cmd.endRenderPass();
+      cmd.endRendering();
+
+      // Transition the swapchain image back to present layout after
+      // rendering
+      vk::ImageMemoryBarrier postRenderBarrier{
+          vk::AccessFlagBits::eColorAttachmentWrite, // srcAccessMask
+          vk::AccessFlagBits::eMemoryRead,           // dstAccessMask
+          vk::ImageLayout::eColorAttachmentOptimal,  // oldLayout
+          vk::ImageLayout::ePresentSrcKHR,           // newLayout
+          VK_QUEUE_FAMILY_IGNORED,
+          VK_QUEUE_FAMILY_IGNORED,
+          swapchainImage,
+          vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, 1, 0,
+                                    1}};
+
+      cmd.pipelineBarrier(vk::PipelineStageFlagBits::eColorAttachmentOutput,
+                          vk::PipelineStageFlagBits::eBottomOfPipe, {}, {}, {},
+                          postRenderBarrier);
+
       cmd.end();
     }
 
@@ -250,8 +242,9 @@ int main() {
         int w, h;
         glfwGetFramebufferSize(window, &w, &h);
         windowInfo->swapchain->recreateSwapchain(w, h);
-        // (recreation of framebuffers/command buffers is omitted
-        //  for brevity – you would do it in a full application)
+        // (full recreation of image views and command buffers is
+        // omitted
+        //  for brevity – you would do it in a complete application)
       }
 
       auto acquireResult = windowInfo->swapchain->acquireNextImage();
@@ -272,19 +265,15 @@ int main() {
       }
     }
 
-    // 14. Cleanup – destroy Vulkan resources that depend on the window
-    //     BEFORE the window is destroyed
+    // 14. Cleanup
     device->waitIdle();
 
-    // Remove the window (destroys swapchain & surface)
     device->removeWindow(windowInfo);
-    windowInfo.reset(); // make sure shared_ptr releases
+    windowInfo.reset();
 
-    // Now it's safe to destroy the GLFW window
     glfwDestroyWindow(window);
     glfwTerminate();
 
-    // deviceManager and other locals will now clean up safely
     return EXIT_SUCCESS;
 
   } catch (const std::exception &e) {

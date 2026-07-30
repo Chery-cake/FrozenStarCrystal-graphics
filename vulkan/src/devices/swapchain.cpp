@@ -304,7 +304,7 @@ std::expected<uint32_t, Swapchain::PresentError> Swapchain::acquireNextImage() {
 
   waitForFrameFence();
 
-  auto [result, index] = swapchain_->acquireNextImage(
+  auto &&[result, index] = swapchain_->acquireNextImage(
       UINT64_MAX, *imageAvailableSemaphores_[currentFrame_]);
 
   switch (result) {
@@ -315,7 +315,7 @@ std::expected<uint32_t, Swapchain::PresentError> Swapchain::acquireNextImage() {
     break;
   case vk::Result::eErrorOutOfDateKHR:
     needRecreation_.store(true, std::memory_order_release);
-    return std::unexpected(PresentError{.code = PresentError::Code::outOfDate,
+    return std::unexpected<PresentError>({.code = PresentError::Code::outOfDate,
                                         .message = "Swapchain out of date"});
   default:
     throw std::runtime_error("vkAcquireNextImageKHR failed");
@@ -332,14 +332,13 @@ std::expected<vk::Result, Swapchain::PresentError> Swapchain::submitAndPresent(
   std::unique_lock lock(mtx_);
 
   if (!frameAcquired_) {
-    return std::unexpected(PresentError{.code = PresentError::Code::notAcquired,
+    return std::unexpected<PresentError>({.code = PresentError::Code::notAcquired,
                                         .message =
                                             "submitAndPresent called without a "
                                             "preceding acquireNextImage"});
   }
   if (submitInfos.empty()) {
-    return std::unexpected(
-        PresentError{.code = PresentError::Code::noWorkSubmitted,
+    return std::unexpected<PresentError>({.code = PresentError::Code::noWorkSubmitted,
                      .message = "At least one submitInfo is required"});
   }
 
@@ -396,14 +395,13 @@ std::expected<vk::Result, Swapchain::PresentError> Swapchain::submitAndPresent(
     result = presentQueue_.presentKHR(presentInfo);
   } catch (const vk::OutOfDateKHRError &) {
     needRecreation_.store(true, std::memory_order_release);
-    return std::unexpected(PresentError{.code = PresentError::Code::outOfDate,
+    return std::unexpected<PresentError>({.code = PresentError::Code::outOfDate,
                                         .message = "Swapchain out of date"});
   } catch (const vk::DeviceLostError &e) {
-    return std::unexpected(PresentError{.code = PresentError::Code::deviceLost,
+    return std::unexpected<PresentError>({.code = PresentError::Code::deviceLost,
                                         .message = e.what()});
   } catch (const std::exception &e) {
-    return std::unexpected(
-        PresentError{.code = PresentError::Code::unknown, .message = e.what()});
+    return std::unexpected<PresentError>({.code = PresentError::Code::unknown, .message = e.what()});
   }
 
   // Advance frame index only on success
