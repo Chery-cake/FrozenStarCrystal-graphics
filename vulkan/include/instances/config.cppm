@@ -11,96 +11,124 @@ import vulkan;
 export namespace graphics::vulkan::instances {
 
 class FROZENSTARCRYSTAL_GRAPHICS_API Config {
-  private:
-    bool needUpdate = false;
-    bool immediate = true;
-    mutable std::mutex mtx;
-
+public:
+  struct InstanceSnapshot {
     std::vector<std::string> instanceExtensions;
     std::vector<std::string> deviceExtensions;
     std::vector<std::string> instanceLayers;
-
     std::vector<std::string> optionalInstanceExtensions;
     std::vector<std::string> optionalDeviceExtensions;
     std::vector<std::string> optionalInstanceLayers;
+  };
 
-    Config() { resetToDefaults(); }
-    ~Config() = default;
+private:
+  bool needUpdate = false;
+  bool immediate = true;
+  mutable std::mutex mtx;
 
-  public:
-    signals::Signals<void()> vulkanChanged;
+  std::vector<std::string> instanceExtensions;
+  std::vector<std::string> deviceExtensions;
+  std::vector<std::string> instanceLayers;
 
-    static constexpr const char *applicationName = APP_NAME;
-    static constexpr uint32_t applicationVersion = vk::makeVersion(
-        APP_VERSION_MAJOR, APP_VERSION_MINOR, APP_VERSION_PATCH);
+  std::vector<std::string> optionalInstanceExtensions;
+  std::vector<std::string> optionalDeviceExtensions;
+  std::vector<std::string> optionalInstanceLayers;
 
-    static constexpr const char *engineName = "FrozenStarCrystal";
-    static constexpr uint32_t engineVersion = vk::makeVersion(0, 1, 0);
-    static constexpr uint32_t minApiVersion = vk::ApiVersion14;
+  Config() { resetToDefaults(); }
+  ~Config() = default;
 
-    static Config &instance() {
-        static Config inst;
-        return inst;
-    }
+public:
+  signals::Signals<void()> vulkanChanged;
 
-    Config(const Config &) = delete;
-    Config &operator=(const Config &) = delete;
-    Config(Config &&) = delete;
-    Config &operator=(Config &&) = delete;
-    constexpr auto operator<=>(const Config &) const noexcept = delete;
+  static constexpr const char *applicationName = APP_NAME;
+  static constexpr uint32_t applicationVersion =
+      vk::makeVersion(APP_VERSION_MAJOR, APP_VERSION_MINOR, APP_VERSION_PATCH);
 
-    void resetToDefaults();
+  static constexpr const char *engineName = "FrozenStarCrystal";
+  static constexpr uint32_t engineVersion = vk::makeVersion(0, 1, 0);
+  static constexpr uint32_t minApiVersion = vk::ApiVersion14;
 
-    bool needsUpdate() const {
-        std::lock_guard lock(mtx);
-        return needUpdate;
-    }
+  static Config &instance() {
+    static Config inst;
+    return inst;
+  }
 
-    void resetUpdate() {
-        std::lock_guard lock(mtx);
-        needUpdate = false;
-    }
+  Config(const Config &) = delete;
+  Config &operator=(const Config &) = delete;
+  Config(Config &&) = delete;
+  Config &operator=(Config &&) = delete;
+  constexpr auto operator<=>(const Config &) const noexcept = delete;
 
-    void setImmediate(bool value) {
-        std::lock_guard lock(mtx);
-        immediate = value;
-    }
+  void resetToDefaults();
 
-    bool addInstanceExtension(const std::string &extension);
-    bool addDeviceExtension(const std::string &extension);
-    bool addInstanceLayer(const std::string &layer);
+  bool needsUpdate() const {
+    std::lock_guard lock(mtx);
+    return needUpdate;
+  }
 
-    bool removeInstanceExtension(const std::string &extension);
-    bool removeDeviceExtension(const std::string &extension);
-    bool removeInstanceLayer(const std::string &layer);
+  void resetUpdate() {
+    std::lock_guard lock(mtx);
+    needUpdate = false;
+  }
 
-    bool addOptionalInstanceExtension(const std::string &extension);
-    bool addOptionalDeviceExtension(const std::string &extension);
-    bool addOptionalInstanceLayer(const std::string &layer);
+  void setImmediate(bool value) {
+    std::lock_guard lock(mtx);
+    immediate = value;
+  }
 
-    bool removeOptionalInstanceExtension(const std::string &extension);
-    bool removeOptionalDeviceExtension(const std::string &extension);
-    bool removeOptionalInstanceLayer(const std::string &layer);
+  bool addInstanceExtension(const std::string &extension);
+  bool addDeviceExtension(const std::string &extension);
+  bool addInstanceLayer(const std::string &layer);
 
-    const std::vector<std::string> &getInstanceExtensions() const {
-        return instanceExtensions;
-    }
-    const std::vector<std::string> &getDeviceExtensions() const {
-        return deviceExtensions;
-    }
-    const std::vector<std::string> &getInstanceLayers() const {
-        return instanceLayers;
-    }
+  bool removeInstanceExtension(const std::string &extension);
+  bool removeDeviceExtension(const std::string &extension);
+  bool removeInstanceLayer(const std::string &layer);
 
-    const std::vector<std::string> &getOptionalInstanceExtensions() const {
-        return optionalInstanceExtensions;
-    }
-    const std::vector<std::string> &getOptionalDeviceExtensions() const {
-        return optionalDeviceExtensions;
-    }
-    const std::vector<std::string> &getOptionalInstanceLayers() const {
-        return optionalInstanceLayers;
-    }
+  bool addOptionalInstanceExtension(const std::string &extension);
+  bool addOptionalDeviceExtension(const std::string &extension);
+  bool addOptionalInstanceLayer(const std::string &layer);
+
+  bool removeOptionalInstanceExtension(const std::string &extension);
+  bool removeOptionalDeviceExtension(const std::string &extension);
+  bool removeOptionalInstanceLayer(const std::string &layer);
+
+  std::vector<std::string> getInstanceExtensions() const {
+    std::unique_lock lock(mtx);
+    return instanceExtensions;
+  }
+  std::vector<std::string> getDeviceExtensions() const {
+    std::unique_lock lock(mtx);
+    return deviceExtensions;
+  }
+  std::vector<std::string> getInstanceLayers() const {
+    std::unique_lock lock(mtx);
+    return instanceLayers;
+  }
+
+  std::vector<std::string> getOptionalInstanceExtensions() const {
+    std::unique_lock lock(mtx);
+    return optionalInstanceExtensions;
+  }
+  std::vector<std::string> getOptionalDeviceExtensions() const {
+    std::unique_lock lock(mtx);
+    return optionalDeviceExtensions;
+  }
+  std::vector<std::string> getOptionalInstanceLayers() const {
+    std::unique_lock lock(mtx);
+    return optionalInstanceLayers;
+  }
+
+  [[nodiscard]] InstanceSnapshot snapshot() const {
+    std::lock_guard lock(mtx);
+    return InstanceSnapshot{
+        .instanceExtensions = instanceExtensions,
+        .deviceExtensions = deviceExtensions,
+        .instanceLayers = instanceLayers,
+        .optionalInstanceExtensions = optionalInstanceExtensions,
+        .optionalDeviceExtensions = optionalDeviceExtensions,
+        .optionalInstanceLayers = optionalInstanceLayers,
+    };
+  }
 };
 
 } // namespace graphics::vulkan::instances

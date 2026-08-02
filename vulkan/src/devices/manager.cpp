@@ -171,8 +171,9 @@ enumeratePhysicalDevices(vk::raii::Instance *instance) {
 
 } // namespace
 
-Manager::Manager(const std::shared_ptr<vk::raii::Instance> &instance)
-    : instance_(instance) {
+Manager::Manager(const std::shared_ptr<vk::raii::Instance> &instance,
+                 const std::shared_ptr<concurrency::pool::ThreadPool> &gpuPool)
+    : instance_(instance), gpuPool_(gpuPool) {
 
   auto infoDev = enumeratePhysicalDevices(instance.get());
 
@@ -180,11 +181,12 @@ Manager::Manager(const std::shared_ptr<vk::raii::Instance> &instance)
     throw std::runtime_error("[Manager] No GPU found");
   }
 
-  std::ranges::for_each(infoDev, [&entries = deviceEntries_,
-                                  &instance](const auto &pair) {
+  std::ranges::for_each(infoDev, [&entries = deviceEntries_, &instance,
+                                  &gpuPool](const auto &pair) {
     auto &&[info, physicalDevice] = pair;
 
-    auto device = std::make_shared<Device>(*instance, physicalDevice, info);
+    auto device =
+        std::make_shared<Device>(*instance, physicalDevice, info, gpuPool);
     auto phyDev =
         std::make_shared<vk::raii::PhysicalDevice>(*instance, physicalDevice);
 

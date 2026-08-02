@@ -13,83 +13,52 @@ namespace graphics::vulkan::devices {
 namespace {
 
 // Helper: pick a queue from the device – prefer transfer, then graphics
-vk::Queue selectQueue(Device &device) {
+vk::Queue selectQueue(Device &device, uint32_t &family) {
   const auto &qfi = device.getQueueFamilies();
   if (qfi.hasTransfer()) {
+    family = qfi.transferQueue.value();
     return device.getTransferQueue();
   }
   if (qfi.hasGraphics()) {
+    family = qfi.graphicsQueue.value();
     return device.getGraphicsQueue();
   }
   throw std::runtime_error("Device has no transfer or graphics queue");
 }
 
-// Helper: create a one‑time command buffer and submit it, wait for completion
-void executeOneShot(Device &device, vk::Queue queue,
-                    std::invocable<vk::CommandBuffer> auto &&record) {
-  auto &pool = (queue == device.getTransferQueue())   ? device.getTransferPool()
-               : (queue == device.getGraphicsQueue()) ? device.getGraphicsPool()
-                                                      : device.getComputePool();
-
-  pool.allocate(1);
-  auto &cmd = pool.buffers.front();
-  cmd.begin(vk::CommandBufferBeginInfo{
-      vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-  record(cmd);
-  cmd.end();
-
-  vk::SubmitInfo submit;
-  submit.setCommandBuffers(*cmd);
-  vk::raii::Fence fence{device.getRaiiDevice(), vk::FenceCreateInfo{}};
-  queue.submit(submit, *fence);
-  auto result =
-      device.getRaiiDevice().waitForFences(*fence, vk::True, UINT64_MAX);
-  if (result != vk::Result::eSuccess) {
-    throw std::runtime_error("Transfer submission failed");
-  }
-  pool.reset(); // reclaim command buffer
-}
-
-// Helper: memory barrier for image layout transitions
 void pipelineBarrier(vk::CommandBuffer cmd, vk::Image image,
-                     vk::AccessFlags srcAccess, vk::AccessFlags dstAccess,
                      vk::ImageLayout oldLayout, vk::ImageLayout newLayout,
-                     vk::ImageSubresourceRange subresource) {
-  vk::ImageMemoryBarrier barrier{srcAccess,
-                                 dstAccess,
-                                 oldLayout,
-                                 newLayout,
-                                 vk::QueueFamilyIgnored,
-                                 vk::QueueFamilyIgnored,
-                                 image,
-                                 subresource};
-  cmd.pipelineBarrier(vk::PipelineStageFlagBits::eAllCommands,
-                      vk::PipelineStageFlagBits::eAllCommands,
-                      vk::DependencyFlags{}, {}, {}, barrier);
+                     vk::ImageSubresourceRange subresource,
+                     vk::PipelineStageFlags2 srcStageMask =
+                         vk::PipelineStageFlagBits2::eAllCommands,
+                     vk::PipelineStageFlags2 dstStageMask =
+                         vk::PipelineStageFlagBits2::eAllTransfer,
+                     vk::AccessFlags2 srcAccessMask = {},
+                     vk::AccessFlags2 dstAccessMask = {}) {
+  vk::ImageMemoryBarrier2 barrier{};
+  barrier.srcStageMask = srcStageMask;
+  barrier.dstStageMask = dstStageMask;
+  barrier.srcAccessMask = srcAccessMask;
+  barrier.dstAccessMask = dstAccessMask;
+  barrier.oldLayout = oldLayout;
+  barrier.newLayout = newLayout;
+  barrier.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
+  barrier.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
+  barrier.image = image;
+  barrier.subresourceRange = subresource;
+
+  vk::DependencyInfo depInfo{};
+  depInfo.setImageMemoryBarriers(barrier);
+  cmd.pipelineBarrier2(depInfo);
 }
 
-// create a staging buffer that is host‑visible and coherent
 AllocatedBuffer createStagingBuffer(Device &device, vk::DeviceSize size) {
-  BufferCreateInfo info{
-      .size = size,
-      .usage = vk::BufferUsageFlagBits::eTransferSrc |
-               vk::BufferUsageFlagBits::eTransferDst,
-      .memoryUsage = vma::MemoryUsage::eAuto,
-      .flags = vma::AllocationCreateFlagBits::eHostAccessSequentialWrite,
-      .debugName = "staging"};
+  BufferCreateInfo info{.size = size,
+                        .usage = vk::BufferUsageFlagBits::eTransferSrc |
+                                 vk::BufferUsageFlagBits::eTransferDst,
+                        .access = BufferCreateInfo::Access::stagingUpload,
+                        .debugName = "staging"};
   return device.createBuffer(info);
-}
-
-vk::DeviceSize formatSize(vk::Format format) {
-  switch (format) {
-  case vk::Format::eR8G8B8A8Unorm:
-  case vk::Format::eR8G8B8A8Srgb:
-    return 4;
-  case vk::Format::eR32G32B32A32Sfloat:
-    return 16;
-  default:
-    throw std::runtime_error("Unsupported format");
-  }
 }
 
 vk::ImageAspectFlags aspectFromFormat(vk::Format fmt) {
@@ -105,14 +74,132 @@ vk::ImageAspectFlags aspectFromFormat(vk::Format fmt) {
 
 } // namespace
 
+vk::DeviceSize formatSize(vk::Format format,
+                          std::optional<vk::DeviceSize> fallback) {
+  switch (format) {
+  case vk::Format::eR8Unorm:
+  case vk::Format::eR8Srgb:
+    return 1;
+  case vk::Format::eR16Sfloat:
+    return 2;
+  case vk::Format::eR32Sfloat:
+    return 4;
+
+  case vk::Format::eR8G8Unorm:
+    return 2;
+  case vk::Format::eR16G16Sfloat:
+    return 4;
+  case vk::Format::eR32G32Sfloat:
+    return 8;
+
+  case vk::Format::eR8G8B8Unorm:
+  case vk::Format::eR8G8B8Srgb:
+  case vk::Format::eB8G8R8Unorm:
+  case vk::Format::eB8G8R8Srgb:
+    return 3;
+
+  case vk::Format::eR8G8B8A8Unorm:
+  case vk::Format::eR8G8B8A8Srgb:
+  case vk::Format::eB8G8R8A8Unorm:
+  case vk::Format::eB8G8R8A8Srgb:
+  case vk::Format::eA8B8G8R8UnormPack32:
+  case vk::Format::eA2R10G10B10UnormPack32:
+  case vk::Format::eA2B10G10R10UnormPack32:
+  case vk::Format::eB10G11R11UfloatPack32:
+    return 4;
+  case vk::Format::eR16G16B16A16Sfloat:
+    return 8;
+  case vk::Format::eR32G32B32A32Sfloat:
+    return 16;
+
+  case vk::Format::eD16Unorm:
+    return 2;
+  case vk::Format::eD32Sfloat:
+  case vk::Format::eD24UnormS8Uint:
+    return 4;
+  case vk::Format::eD32SfloatS8Uint:
+    return 5;
+
+  // Planar formats: returned size is per-plane byte estimate.
+  case vk::Format::eG8B8R82Plane420Unorm:
+  case vk::Format::eG8B8R83Plane420Unorm:
+    return 1;
+
+  // Block-compressed formats: returned size is bytes per 4×4 texel block.
+  // Use imageDataSize() for correct total buffer size calculations.
+  case vk::Format::eBc1RgbUnormBlock:
+  case vk::Format::eBc1RgbSrgbBlock:
+  case vk::Format::eBc1RgbaUnormBlock:
+  case vk::Format::eBc1RgbaSrgbBlock:
+  case vk::Format::eBc4UnormBlock:
+  case vk::Format::eBc4SnormBlock:
+    return 8; // 8 bytes per 4×4 block
+  case vk::Format::eBc2UnormBlock:
+  case vk::Format::eBc2SrgbBlock:
+  case vk::Format::eBc3UnormBlock:
+  case vk::Format::eBc3SrgbBlock:
+  case vk::Format::eBc5UnormBlock:
+  case vk::Format::eBc5SnormBlock:
+  case vk::Format::eBc6HUfloatBlock:
+  case vk::Format::eBc6HSfloatBlock:
+  case vk::Format::eBc7UnormBlock:
+  case vk::Format::eBc7SrgbBlock:
+    return 16; // 16 bytes per 4×4 block
+
+  default:
+    if (fallback.has_value()) {
+      return fallback.value();
+    }
+    throw std::runtime_error("Unsupported format");
+  }
+}
+
+bool isBlockCompressed(vk::Format fmt) {
+  switch (fmt) {
+  case vk::Format::eBc1RgbUnormBlock:
+  case vk::Format::eBc1RgbSrgbBlock:
+  case vk::Format::eBc1RgbaUnormBlock:
+  case vk::Format::eBc1RgbaSrgbBlock:
+  case vk::Format::eBc2UnormBlock:
+  case vk::Format::eBc2SrgbBlock:
+  case vk::Format::eBc3UnormBlock:
+  case vk::Format::eBc3SrgbBlock:
+  case vk::Format::eBc4UnormBlock:
+  case vk::Format::eBc4SnormBlock:
+  case vk::Format::eBc5UnormBlock:
+  case vk::Format::eBc5SnormBlock:
+  case vk::Format::eBc6HUfloatBlock:
+  case vk::Format::eBc6HSfloatBlock:
+  case vk::Format::eBc7UnormBlock:
+  case vk::Format::eBc7SrgbBlock:
+    return true;
+  default:
+    return false;
+  }
+}
+
+vk::DeviceSize imageDataSize(vk::Format format, vk::Extent3D extent) {
+  if (isBlockCompressed(format)) {
+    // BCn formats pack 4×4 texel blocks; align dimensions up to block
+    // boundary
+    const vk::DeviceSize blocksX = (extent.width + 3u) / 4u;
+    const vk::DeviceSize blocksY = (extent.height + 3u) / 4u;
+    return blocksX * blocksY * extent.depth * formatSize(format);
+  }
+  return static_cast<vk::DeviceSize>(extent.width) *
+         static_cast<vk::DeviceSize>(extent.height) *
+         static_cast<vk::DeviceSize>(extent.depth) * formatSize(format);
+}
+
 // ===================== intra‑device implementations =====================
 
 void transfer(Device &device, const AllocatedBuffer &src,
               vk::DeviceSize srcOffset, AllocatedBuffer &dst,
               vk::DeviceSize dstOffset, vk::DeviceSize size) {
-  auto queue = selectQueue(device);
-  executeOneShot(
-      device, queue,
+  uint32_t family = 0;
+  auto queue = selectQueue(device, family);
+  device.submitOneShot(
+      queue, family,
       [&srcOffset, &dstOffset, &size, &src, &dst](vk::CommandBuffer cmd) {
         vk::BufferCopy region{srcOffset, dstOffset, size};
         cmd.copyBuffer(src.getBuffer(), dst.getBuffer(), region);
@@ -122,17 +209,19 @@ void transfer(Device &device, const AllocatedBuffer &src,
 void transfer(Device &device, const AllocatedBuffer &src,
               vk::DeviceSize bufferOffset, AllocatedImage &dst,
               vk::ImageLayout dstFinalLayout) {
-  auto queue = selectQueue(device);
+  uint32_t family = 0;
+  auto queue = selectQueue(device, family);
   const auto aspect = aspectFromFormat(dst.format);
-  executeOneShot(
-      device, queue,
-      [&src, &dst, &bufferOffset, &dstFinalLayout,
-       &aspect](vk::CommandBuffer cmd) {
+  const auto srcLayout = dst.currentLayout;
+  device.submitOneShot(
+      queue, family,
+      [&src, &dst, &bufferOffset, &dstFinalLayout, &aspect,
+       srcLayout](vk::CommandBuffer cmd) {
         vk::ImageSubresourceRange subresource{aspect, 0, 1, 0, 1};
-        pipelineBarrier(cmd, dst.getImage(), vk::AccessFlagBits::eNone,
-                        vk::AccessFlagBits::eTransferWrite,
-                        vk::ImageLayout::eUndefined,
-                        vk::ImageLayout::eTransferDstOptimal, subresource);
+        pipelineBarrier(cmd, dst.getImage(), srcLayout,
+                        vk::ImageLayout::eTransferDstOptimal, subresource, {},
+                        vk::PipelineStageFlagBits2::eAllTransfer, {},
+                        vk::AccessFlagBits2::eTransferWrite);
 
         vk::BufferImageCopy region{bufferOffset,
                                    0,
@@ -143,27 +232,30 @@ void transfer(Device &device, const AllocatedBuffer &src,
         cmd.copyBufferToImage(src.getBuffer(), dst.getImage(),
                               vk::ImageLayout::eTransferDstOptimal, region);
 
-        pipelineBarrier(cmd, dst.getImage(), vk::AccessFlagBits::eTransferWrite,
-                        vk::AccessFlagBits::eShaderRead,
+        pipelineBarrier(cmd, dst.getImage(),
                         vk::ImageLayout::eTransferDstOptimal, dstFinalLayout,
-                        subresource);
+                        subresource, vk::PipelineStageFlagBits2::eAllTransfer,
+                        vk::PipelineStageFlagBits2::eAllCommands,
+                        vk::AccessFlagBits2::eTransferWrite,
+                        vk::AccessFlagBits2::eMemoryRead);
       });
+  dst.currentLayout = dstFinalLayout;
 }
 
-void transfer(Device &device, const AllocatedImage &src,
-              vk::ImageLayout srcCurrentLayout, AllocatedBuffer &dst,
+void transfer(Device &device, const AllocatedImage &src, AllocatedBuffer &dst,
               vk::DeviceSize bufferOffset) {
-  auto queue = selectQueue(device);
+  uint32_t family = 0;
+  auto queue = selectQueue(device, family);
   const auto aspect = aspectFromFormat(src.format);
-  executeOneShot(
-      device, queue,
-      [&src, &dst, &srcCurrentLayout, &bufferOffset,
-       &aspect](vk::CommandBuffer cmd) {
+  const auto srcLayout = src.currentLayout;
+  device.submitOneShot(
+      queue, family,
+      [&src, &dst, &bufferOffset, &aspect, srcLayout](vk::CommandBuffer cmd) {
         vk::ImageSubresourceRange subresource{aspect, 0, 1, 0, 1};
-        // transition to transfer source
-        pipelineBarrier(cmd, src.getImage(), vk::AccessFlagBits::eMemoryRead,
-                        vk::AccessFlagBits::eTransferRead, srcCurrentLayout,
-                        vk::ImageLayout::eTransferSrcOptimal, subresource);
+        pipelineBarrier(cmd, src.getImage(), srcLayout,
+                        vk::ImageLayout::eTransferSrcOptimal, subresource, {},
+                        vk::PipelineStageFlagBits2::eAllTransfer, {},
+                        vk::AccessFlagBits2::eTransferRead);
 
         vk::BufferImageCopy region{bufferOffset,
                                    0,
@@ -175,35 +267,39 @@ void transfer(Device &device, const AllocatedImage &src,
                               vk::ImageLayout::eTransferSrcOptimal,
                               dst.getBuffer(), region);
 
-        // transition back
-        pipelineBarrier(cmd, src.getImage(), vk::AccessFlagBits::eTransferRead,
-                        vk::AccessFlagBits::eMemoryRead,
-                        vk::ImageLayout::eTransferSrcOptimal, srcCurrentLayout,
-                        subresource);
+        pipelineBarrier(cmd, src.getImage(),
+                        vk::ImageLayout::eTransferSrcOptimal, srcLayout,
+                        subresource, vk::PipelineStageFlagBits2::eAllTransfer,
+                        vk::PipelineStageFlagBits2::eAllCommands,
+                        vk::AccessFlagBits2::eTransferRead,
+                        vk::AccessFlagBits2::eMemoryRead);
       });
 }
 
-void transfer(Device &device, const AllocatedImage &src,
-              vk::ImageLayout srcCurrentLayout, AllocatedImage &dst,
-              vk::ImageLayout dstCurrentLayout,
+void transfer(Device &device, const AllocatedImage &src, AllocatedImage &dst,
               vk::ImageLayout dstFinalLayout) {
-  auto queue = selectQueue(device);
+  uint32_t family = 0;
+  auto queue = selectQueue(device, family);
   const auto srcAspect = aspectFromFormat(src.format);
   const auto dstAspect = aspectFromFormat(dst.format);
-  executeOneShot(
-      device, queue,
-      [&src, &dst, &srcCurrentLayout, &dstCurrentLayout, &dstFinalLayout,
-       &srcAspect, &dstAspect](vk::CommandBuffer cmd) {
+  const auto srcLayout = src.currentLayout;
+  const auto dstLayout = dst.currentLayout;
+  device.submitOneShot(
+      queue, family,
+      [&src, &dst, srcLayout, dstLayout, &dstFinalLayout, &srcAspect,
+       &dstAspect](vk::CommandBuffer cmd) {
         // src -> transfer source
         vk::ImageSubresourceRange srcSubresource{srcAspect, 0, 1, 0, 1};
-        pipelineBarrier(cmd, src.getImage(), vk::AccessFlagBits::eMemoryRead,
-                        vk::AccessFlagBits::eTransferRead, srcCurrentLayout,
-                        vk::ImageLayout::eTransferSrcOptimal, srcSubresource);
+        pipelineBarrier(cmd, src.getImage(), srcLayout,
+                        vk::ImageLayout::eTransferSrcOptimal, srcSubresource,
+                        {}, vk::PipelineStageFlagBits2::eAllTransfer, {},
+                        vk::AccessFlagBits2::eTransferRead);
         // dst -> transfer destination
         vk::ImageSubresourceRange dstSubresource{dstAspect, 0, 1, 0, 1};
-        pipelineBarrier(cmd, dst.getImage(), vk::AccessFlagBits::eMemoryWrite,
-                        vk::AccessFlagBits::eTransferWrite, dstCurrentLayout,
-                        vk::ImageLayout::eTransferDstOptimal, dstSubresource);
+        pipelineBarrier(cmd, dst.getImage(), dstLayout,
+                        vk::ImageLayout::eTransferDstOptimal, dstSubresource,
+                        {}, vk::PipelineStageFlagBits2::eAllTransfer, {},
+                        vk::AccessFlagBits2::eTransferWrite);
 
         vk::ImageCopy region{vk::ImageSubresourceLayers{srcAspect, 0, 0, 1},
                              vk::Offset3D{0, 0, 0},
@@ -214,15 +310,21 @@ void transfer(Device &device, const AllocatedImage &src,
                       region);
 
         // transition back src and dst
-        pipelineBarrier(cmd, src.getImage(), vk::AccessFlagBits::eTransferRead,
-                        vk::AccessFlagBits::eMemoryRead,
-                        vk::ImageLayout::eTransferSrcOptimal, srcCurrentLayout,
-                        srcSubresource);
-        pipelineBarrier(cmd, dst.getImage(), vk::AccessFlagBits::eTransferWrite,
-                        vk::AccessFlagBits::eShaderRead,
+        pipelineBarrier(
+            cmd, src.getImage(), vk::ImageLayout::eTransferSrcOptimal,
+            srcLayout, srcSubresource, vk::PipelineStageFlagBits2::eAllTransfer,
+            vk::PipelineStageFlagBits2::eAllCommands,
+            vk::AccessFlagBits2::eTransferRead,
+            vk::AccessFlagBits2::eMemoryRead);
+        pipelineBarrier(cmd, dst.getImage(),
                         vk::ImageLayout::eTransferDstOptimal, dstFinalLayout,
-                        dstSubresource);
+                        dstSubresource,
+                        vk::PipelineStageFlagBits2::eAllTransfer,
+                        vk::PipelineStageFlagBits2::eAllCommands,
+                        vk::AccessFlagBits2::eTransferWrite,
+                        vk::AccessFlagBits2::eMemoryRead);
       });
+  dst.currentLayout = dstFinalLayout;
 }
 
 // ===================== swapchain record‑only helpers =====================
@@ -236,31 +338,29 @@ void recordTransfer(vk::CommandBuffer cmd, const AllocatedBuffer &src,
   const vk::ImageSubresourceRange subresource{aspect, 0, 1, 0, 1};
 
   // 1. Transition swapchain image to transfer destination
-  pipelineBarrier(cmd, swapchainImage,
-                  vk::AccessFlagBits::eNone, // src access (undefined layout)
-                  vk::AccessFlagBits::eTransferWrite, currentLayout,
-                  vk::ImageLayout::eTransferDstOptimal, subresource);
+  pipelineBarrier(cmd, swapchainImage, currentLayout,
+                  vk::ImageLayout::eTransferDstOptimal, subresource, {},
+                  vk::PipelineStageFlagBits2::eAllTransfer, {},
+                  vk::AccessFlagBits2::eTransferWrite);
 
   // 2. Copy buffer to image
   vk::BufferImageCopy region{
-      srcOffset, // buffer offset
+      srcOffset,
       0,
-      0, // buffer row length / height (0 = tightly packed)
-      vk::ImageSubresourceLayers{aspect, 0, 0, 1},           // subresource
-      vk::Offset3D{0, 0, 0},                                 // image offset
-      vk::Extent3D{imageExtent.width, imageExtent.height, 1} // extent
-  };
+      0,
+      vk::ImageSubresourceLayers{aspect, 0, 0, 1},
+      vk::Offset3D{0, 0, 0},
+      vk::Extent3D{imageExtent.width, imageExtent.height, 1}};
   cmd.copyBufferToImage(src.getBuffer(), swapchainImage,
                         vk::ImageLayout::eTransferDstOptimal, region);
 
   // 3. Transition to final layout
-  pipelineBarrier(cmd, swapchainImage, vk::AccessFlagBits::eTransferWrite,
-                  vk::AccessFlagBits::eMemoryRead, // will be read by next stage
-                  vk::ImageLayout::eTransferDstOptimal, dstFinalLayout,
-                  subresource);
+  pipelineBarrier(
+      cmd, swapchainImage, vk::ImageLayout::eTransferDstOptimal, dstFinalLayout,
+      subresource, vk::PipelineStageFlagBits2::eAllTransfer,
+      vk::PipelineStageFlagBits2::eAllCommands,
+      vk::AccessFlagBits2::eTransferWrite, vk::AccessFlagBits2::eMemoryRead);
 }
-
-// ----------
 
 void recordTransfer(vk::CommandBuffer cmd, vk::Image swapchainImage,
                     vk::Extent2D imageExtent, vk::Format imageFormat,
@@ -270,9 +370,10 @@ void recordTransfer(vk::CommandBuffer cmd, vk::Image swapchainImage,
   const vk::ImageSubresourceRange subresource{aspect, 0, 1, 0, 1};
 
   // 1. Transition to transfer source
-  pipelineBarrier(cmd, swapchainImage, vk::AccessFlagBits::eMemoryRead,
-                  vk::AccessFlagBits::eTransferRead, currentLayout,
-                  vk::ImageLayout::eTransferSrcOptimal, subresource);
+  pipelineBarrier(cmd, swapchainImage, currentLayout,
+                  vk::ImageLayout::eTransferSrcOptimal, subresource, {},
+                  vk::PipelineStageFlagBits2::eAllTransfer, {},
+                  vk::AccessFlagBits2::eTransferRead);
 
   // 2. Copy image to buffer
   vk::BufferImageCopy region{
@@ -286,13 +387,12 @@ void recordTransfer(vk::CommandBuffer cmd, vk::Image swapchainImage,
                         dst.getBuffer(), region);
 
   // 3. Transition back to final layout
-  pipelineBarrier(cmd, swapchainImage, vk::AccessFlagBits::eTransferRead,
-                  vk::AccessFlagBits::eMemoryRead,
-                  vk::ImageLayout::eTransferSrcOptimal, finalLayout,
-                  subresource);
+  pipelineBarrier(
+      cmd, swapchainImage, vk::ImageLayout::eTransferSrcOptimal, finalLayout,
+      subresource, vk::PipelineStageFlagBits2::eAllTransfer,
+      vk::PipelineStageFlagBits2::eAllCommands,
+      vk::AccessFlagBits2::eTransferRead, vk::AccessFlagBits2::eMemoryRead);
 }
-
-// ----------
 
 void recordTransfer(vk::CommandBuffer cmd, const AllocatedImage &src,
                     vk::ImageLayout srcCurrentLayout, vk::Image swapchainImage,
@@ -303,16 +403,18 @@ void recordTransfer(vk::CommandBuffer cmd, const AllocatedImage &src,
   const auto dstAspect = aspectFromFormat(imageFormat);
 
   // Source: transition to transfer source
-  pipelineBarrier(cmd, src.getImage(), vk::AccessFlagBits::eMemoryRead,
-                  vk::AccessFlagBits::eTransferRead, srcCurrentLayout,
+  pipelineBarrier(cmd, src.getImage(), srcCurrentLayout,
                   vk::ImageLayout::eTransferSrcOptimal,
-                  vk::ImageSubresourceRange{srcAspect, 0, 1, 0, 1});
+                  vk::ImageSubresourceRange{srcAspect, 0, 1, 0, 1}, {},
+                  vk::PipelineStageFlagBits2::eAllTransfer, {},
+                  vk::AccessFlagBits2::eTransferRead);
 
   // Destination (swapchain): transition to transfer destination
-  pipelineBarrier(cmd, swapchainImage, vk::AccessFlagBits::eMemoryRead,
-                  vk::AccessFlagBits::eTransferWrite, currentLayout,
+  pipelineBarrier(cmd, swapchainImage, currentLayout,
                   vk::ImageLayout::eTransferDstOptimal,
-                  vk::ImageSubresourceRange{dstAspect, 0, 1, 0, 1});
+                  vk::ImageSubresourceRange{dstAspect, 0, 1, 0, 1}, {},
+                  vk::PipelineStageFlagBits2::eAllTransfer, {},
+                  vk::AccessFlagBits2::eTransferWrite);
 
   vk::ImageCopy region{
       vk::ImageSubresourceLayers{srcAspect, 0, 0, 1}, vk::Offset3D{0, 0, 0},
@@ -322,19 +424,20 @@ void recordTransfer(vk::CommandBuffer cmd, const AllocatedImage &src,
                 swapchainImage, vk::ImageLayout::eTransferDstOptimal, region);
 
   // Transition both back
-  pipelineBarrier(cmd, src.getImage(), vk::AccessFlagBits::eTransferRead,
-                  vk::AccessFlagBits::eMemoryRead,
-                  vk::ImageLayout::eTransferSrcOptimal,
-                  srcCurrentLayout, // restore source's original layout
-                  vk::ImageSubresourceRange{srcAspect, 0, 1, 0, 1});
+  pipelineBarrier(
+      cmd, src.getImage(), vk::ImageLayout::eTransferSrcOptimal,
+      srcCurrentLayout, vk::ImageSubresourceRange{srcAspect, 0, 1, 0, 1},
+      vk::PipelineStageFlagBits2::eAllTransfer,
+      vk::PipelineStageFlagBits2::eAllCommands,
+      vk::AccessFlagBits2::eTransferRead, vk::AccessFlagBits2::eMemoryRead);
 
-  pipelineBarrier(cmd, swapchainImage, vk::AccessFlagBits::eTransferWrite,
-                  vk::AccessFlagBits::eMemoryRead,
-                  vk::ImageLayout::eTransferDstOptimal, dstFinalLayout,
-                  vk::ImageSubresourceRange{dstAspect, 0, 1, 0, 1});
+  pipelineBarrier(
+      cmd, swapchainImage, vk::ImageLayout::eTransferDstOptimal, dstFinalLayout,
+      vk::ImageSubresourceRange{dstAspect, 0, 1, 0, 1},
+      vk::PipelineStageFlagBits2::eAllTransfer,
+      vk::PipelineStageFlagBits2::eAllCommands,
+      vk::AccessFlagBits2::eTransferWrite, vk::AccessFlagBits2::eMemoryRead);
 }
-
-// ----------
 
 void recordTransfer(vk::CommandBuffer cmd, vk::Image swapchainImage,
                     vk::Extent2D imageExtent, vk::Format imageFormat,
@@ -345,16 +448,18 @@ void recordTransfer(vk::CommandBuffer cmd, vk::Image swapchainImage,
   const auto dstAspect = aspectFromFormat(dst.format);
 
   // Source: transition to transfer source
-  pipelineBarrier(cmd, swapchainImage, vk::AccessFlagBits::eMemoryRead,
-                  vk::AccessFlagBits::eTransferRead, currentLayout,
+  pipelineBarrier(cmd, swapchainImage, currentLayout,
                   vk::ImageLayout::eTransferSrcOptimal,
-                  vk::ImageSubresourceRange{srcAspect, 0, 1, 0, 1});
+                  vk::ImageSubresourceRange{srcAspect, 0, 1, 0, 1}, {},
+                  vk::PipelineStageFlagBits2::eAllTransfer, {},
+                  vk::AccessFlagBits2::eTransferRead);
 
   // Destination: transition to transfer destination
-  pipelineBarrier(cmd, dst.getImage(), vk::AccessFlagBits::eMemoryWrite,
-                  vk::AccessFlagBits::eTransferWrite, dstCurrentLayout,
+  pipelineBarrier(cmd, dst.getImage(), dstCurrentLayout,
                   vk::ImageLayout::eTransferDstOptimal,
-                  vk::ImageSubresourceRange{dstAspect, 0, 1, 0, 1});
+                  vk::ImageSubresourceRange{dstAspect, 0, 1, 0, 1}, {},
+                  vk::PipelineStageFlagBits2::eAllTransfer, {},
+                  vk::AccessFlagBits2::eTransferWrite);
 
   // Copy the whole image
   vk::ImageCopy region{
@@ -365,16 +470,20 @@ void recordTransfer(vk::CommandBuffer cmd, vk::Image swapchainImage,
                 dst.getImage(), vk::ImageLayout::eTransferDstOptimal, region);
 
   // Transition both back
-  pipelineBarrier(
-      cmd, swapchainImage, vk::AccessFlagBits::eTransferRead,
-      vk::AccessFlagBits::eMemoryRead, vk::ImageLayout::eTransferSrcOptimal,
-      vk::ImageLayout::ePresentSrcKHR, // typical final for swapchain
-      vk::ImageSubresourceRange{srcAspect, 0, 1, 0, 1});
+  pipelineBarrier(cmd, swapchainImage, vk::ImageLayout::eTransferSrcOptimal,
+                  vk::ImageLayout::ePresentSrcKHR,
+                  vk::ImageSubresourceRange{srcAspect, 0, 1, 0, 1},
+                  vk::PipelineStageFlagBits2::eAllTransfer,
+                  vk::PipelineStageFlagBits2::eAllCommands,
+                  vk::AccessFlagBits2::eTransferRead,
+                  vk::AccessFlagBits2::eMemoryRead);
 
-  pipelineBarrier(cmd, dst.getImage(), vk::AccessFlagBits::eTransferWrite,
-                  vk::AccessFlagBits::eShaderRead,
-                  vk::ImageLayout::eTransferDstOptimal, dstFinalLayout,
-                  vk::ImageSubresourceRange{dstAspect, 0, 1, 0, 1});
+  pipelineBarrier(
+      cmd, dst.getImage(), vk::ImageLayout::eTransferDstOptimal, dstFinalLayout,
+      vk::ImageSubresourceRange{dstAspect, 0, 1, 0, 1},
+      vk::PipelineStageFlagBits2::eAllTransfer,
+      vk::PipelineStageFlagBits2::eAllCommands,
+      vk::AccessFlagBits2::eTransferWrite, vk::AccessFlagBits2::eMemoryRead);
 }
 
 // ===================== inter‑device implementations =====================
@@ -410,9 +519,7 @@ void transfer(Device &srcDevice, const AllocatedBuffer &src,
               vk::DeviceSize srcOffset, Device &dstDevice, AllocatedImage &dst,
               vk::ImageLayout dstFinalLayout) {
   // Use a staging buffer on the source device
-  vk::DeviceSize imageSize =
-      static_cast<vk::DeviceSize>(dst.extent.width * dst.extent.height) *
-      formatSize(dst.format);
+  vk::DeviceSize imageSize = imageDataSize(dst.format, dst.extent);
   auto staging = createStagingBuffer(srcDevice, imageSize);
   // copy src buffer -> staging (intra src device)
   transfer(srcDevice, src, srcOffset, staging, 0, imageSize);
@@ -420,28 +527,94 @@ void transfer(Device &srcDevice, const AllocatedBuffer &src,
   transfer(dstDevice, staging, 0, dst, dstFinalLayout);
 }
 
-void transfer(Device &srcDevice, const AllocatedImage &src,
-              vk::ImageLayout srcCurrentLayout, Device &dstDevice,
+void transfer(Device &srcDevice, const AllocatedImage &src, Device &dstDevice,
               AllocatedBuffer &dst, vk::DeviceSize dstOffset) {
-  vk::DeviceSize imageSize =
-      static_cast<vk::DeviceSize>(src.extent.width * src.extent.height) *
-      formatSize(src.format);
+  vk::DeviceSize imageSize = imageDataSize(src.format, src.extent);
   auto staging = createStagingBuffer(srcDevice, imageSize);
   // intra src device: image -> staging buffer
-  transfer(srcDevice, src, srcCurrentLayout, staging, 0);
+  transfer(srcDevice, src, staging, 0);
   // copy staging -> dst buffer via dstDevice intra‑device
   transfer(dstDevice, staging, 0, dst, dstOffset, imageSize);
 }
 
-void transfer(Device &srcDevice, const AllocatedImage &src,
-              vk::ImageLayout srcCurrentLayout, Device &dstDevice,
+void transfer(Device &srcDevice, const AllocatedImage &src, Device &dstDevice,
               AllocatedImage &dst, vk::ImageLayout dstFinalLayout) {
-  vk::DeviceSize imageSize =
-      static_cast<vk::DeviceSize>(src.extent.width * src.extent.height) *
-      formatSize(src.format);
+  vk::DeviceSize imageSize = imageDataSize(src.format, src.extent);
   auto staging = createStagingBuffer(srcDevice, imageSize);
-  transfer(srcDevice, src, srcCurrentLayout, staging, 0);
+  transfer(srcDevice, src, staging, 0);
   transfer(dstDevice, staging, 0, dst, dstFinalLayout);
+}
+
+// ---------- async variants ----------
+
+std::future<void> transferAsync(Device &device, const AllocatedBuffer &src,
+                                vk::DeviceSize srcOffset, AllocatedBuffer &dst,
+                                vk::DeviceSize dstOffset, vk::DeviceSize size) {
+  return device.submit([&device, &src, srcOffset, &dst, dstOffset, size]() {
+    transfer(device, src, srcOffset, dst, dstOffset, size);
+  });
+}
+
+std::future<void> transferAsync(Device &device, const AllocatedBuffer &src,
+                                vk::DeviceSize bufferOffset,
+                                AllocatedImage &dst,
+                                vk::ImageLayout dstFinalLayout) {
+  return device.submit([&device, &src, bufferOffset, &dst, dstFinalLayout]() {
+    transfer(device, src, bufferOffset, dst, dstFinalLayout);
+  });
+}
+
+std::future<void> transferAsync(Device &device, const AllocatedImage &src,
+                                AllocatedBuffer &dst,
+                                vk::DeviceSize bufferOffset) {
+  return device.submit([&device, &src, &dst, bufferOffset]() {
+    transfer(device, src, dst, bufferOffset);
+  });
+}
+
+std::future<void> transferAsync(Device &device, const AllocatedImage &src,
+                                AllocatedImage &dst,
+                                vk::ImageLayout dstFinalLayout) {
+  return device.submit([&device, &src, &dst, dstFinalLayout]() {
+    transfer(device, src, dst, dstFinalLayout);
+  });
+}
+
+std::future<void> transferAsync(Device &srcDevice, const AllocatedBuffer &src,
+                                vk::DeviceSize srcOffset, Device &dstDevice,
+                                AllocatedBuffer &dst, vk::DeviceSize dstOffset,
+                                vk::DeviceSize size) {
+  return srcDevice.submit(
+      [&srcDevice, &src, srcOffset, &dstDevice, &dst, dstOffset, size]() {
+        transfer(srcDevice, src, srcOffset, dstDevice, dst, dstOffset, size);
+      });
+}
+
+std::future<void> transferAsync(Device &srcDevice, const AllocatedBuffer &src,
+                                vk::DeviceSize srcOffset, Device &dstDevice,
+                                AllocatedImage &dst,
+                                vk::ImageLayout dstFinalLayout) {
+  return srcDevice.submit(
+      [&srcDevice, &src, srcOffset, &dstDevice, &dst, dstFinalLayout]() {
+        transfer(srcDevice, src, srcOffset, dstDevice, dst, dstFinalLayout);
+      });
+}
+
+std::future<void> transferAsync(Device &srcDevice, const AllocatedImage &src,
+                                Device &dstDevice, AllocatedBuffer &dst,
+                                vk::DeviceSize dstOffset) {
+  return srcDevice.submit([&srcDevice, &src, &dstDevice, &dst, dstOffset]() {
+    transfer(srcDevice, src, dstDevice, dst, dstOffset);
+  });
+}
+
+std::future<void> transferAsync(Device &srcDevice, const AllocatedImage &src,
+                                Device &dstDevice, AllocatedImage &dst,
+                                vk::ImageLayout dstFinalLayout) {
+  return srcDevice.submit(
+      [&srcDevice, &src, &dstDevice, &dst, dstFinalLayout]() {
+        transfer(srcDevice, src, dstDevice, dst, dstFinalLayout);
+      });
 }
 
 } // namespace graphics::vulkan::devices

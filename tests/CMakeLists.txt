@@ -68,6 +68,7 @@ endfunction()
 add_tests_from_folder("vulkan"
     LIBRARY
         ${MAIN_LIB}
+        FrozenStarCrystal-core
         glfw
     DEPENDENCY
         copy_assets_test

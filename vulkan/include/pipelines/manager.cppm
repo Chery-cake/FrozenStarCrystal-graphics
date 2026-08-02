@@ -13,14 +13,15 @@ import graphics.vulkan.shaders;
 import :structs;
 
 export namespace graphics::vulkan::pipelines {
-using DynamicCache =
-    std::unordered_map<DynamicPipeline, std::shared_ptr<vk::raii::Pipeline>>;
+using DynamicCache = std::unordered_map<DynamicPipelineInfo,
+                                        std::shared_ptr<vk::raii::Pipeline>>;
 using StaticCache =
-    std::unordered_map<StaticPipeline, std::shared_ptr<vk::raii::Pipeline>>;
+    std::unordered_map<StaticPipelineInfo, std::shared_ptr<vk::raii::Pipeline>>;
 
 struct FROZENSTARCRYSTAL_GRAPHICS_API DeviceEntry {
   DynamicCache dynamicPipelines;
   StaticCache staticPipelines;
+  std::shared_mutex entryMtx;
 };
 } // namespace graphics::vulkan::pipelines
 

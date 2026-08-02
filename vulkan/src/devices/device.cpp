@@ -9,6 +9,8 @@ import vulkan;
 import vk_mem_alloc;
 import graphics.vulkan.instances;
 
+import concurrency;
+
 namespace graphics::vulkan::devices {
 
 namespace {
@@ -33,25 +35,29 @@ std::optional<uint32_t> findPresentQueue(vk::raii::SurfaceKHR *surface,
 
 } // namespace
 
-static std::unordered_map<std::thread::id, Device *> &getTouchedDevices() {
-  static std::unordered_map<std::thread::id, Device *> devices;
-  return devices;
-}
+struct TouchedDevice {
+  Device *device;
+  std::weak_ptr<uint8_t> alive;
+};
+thread_local std::vector<TouchedDevice> touchedDevices;
 
-struct GlobalThreadCleanup {
-  ~GlobalThreadCleanup() {
-    std::ranges::for_each(getTouchedDevices(),
-                          [](std::pair<std::thread::id, Device *> pair) {
-                            pair.second->removeThreadPools(pair.first);
-                          });
+struct ThreadPoolCleanup {
+  ~ThreadPoolCleanup() {
+
+    std::ranges::for_each(touchedDevices, [](const auto &entry) {
+      if (entry.device != nullptr && !entry.alive.expired()) {
+        entry.device->removeThreadPools(std::this_thread::get_id());
+      }
+    });
   }
 };
-thread_local GlobalThreadCleanup cleanupGuard;
+thread_local ThreadPoolCleanup cleanup;
 
 Device::Device(const vk::raii::Instance &instance,
-               vk::PhysicalDevice physicalDevice, const GPUInfo &info) {
-
-  info_ = info;
+               vk::PhysicalDevice physicalDevice, const GPUInfo &info,
+               const std::shared_ptr<concurrency::pool::ThreadPool> &gpuPool)
+    : info_(info), gpuPool_(gpuPool),
+      aliveToken_(std::make_shared<uint8_t>(0)) {
 
   physicalDevice_ =
       std::make_shared<vk::raii::PhysicalDevice>(instance, physicalDevice);
@@ -85,15 +91,25 @@ Device::Device(const vk::raii::Instance &instance,
   // Get device features
   // TODO see to add optional features
   // TODO move this setup to a separete function for easier management
+
+  auto availableFeatures = physicalDevice_->getFeatures2<
+      vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features,
+      vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features,
+      vk::PhysicalDeviceVulkan14Features>(); // TODO update to get from
+  // available features
+
+  auto &baseFeatures =
+      availableFeatures.get<vk::PhysicalDeviceFeatures2>().features;
+
   vk::PhysicalDeviceFeatures deviceFeatures{};
-  deviceFeatures.setSamplerAnisotropy(vk::True);
-  deviceFeatures.setFillModeNonSolid(vk::True);
-  deviceFeatures.setWideLines(vk::True);
-  deviceFeatures.setGeometryShader(vk::True);
-  deviceFeatures.setTessellationShader(vk::True);
-  deviceFeatures.setShaderInt16(vk::True);
-  // deviceFeatures.setShaderInt64(vk::True);
-  // deviceFeatures.setShaderFloat64(vk::True);
+  deviceFeatures.setSamplerAnisotropy(baseFeatures.samplerAnisotropy);
+  deviceFeatures.setFillModeNonSolid(baseFeatures.fillModeNonSolid);
+  deviceFeatures.setWideLines(baseFeatures.wideLines);
+  deviceFeatures.setGeometryShader(baseFeatures.geometryShader);
+  deviceFeatures.setTessellationShader(baseFeatures.tessellationShader);
+  deviceFeatures.setShaderInt16(baseFeatures.shaderInt16);
+  deviceFeatures.setShaderInt64(baseFeatures.shaderInt64);
+  deviceFeatures.setShaderFloat64(baseFeatures.shaderFloat64);
 
   vk::PhysicalDeviceVulkan11Features deviceFeatures11{};
   deviceFeatures11.sType = vk::StructureType::ePhysicalDeviceVulkan11Features;
@@ -209,16 +225,18 @@ Device::~Device() {
 
   windows_.clear();
 
-  std::erase_if(getTouchedDevices(),
-                [this](std::pair<std::thread::id, Device *> pair) {
-                  return pair.second == this;
-                });
+  std::erase_if(touchedDevices, [this](const TouchedDevice &entry) {
+    return entry.device == this;
+  });
 
   graphicsPools_.clear();
   computePools_.clear();
   transferPools_.clear();
   sparseBidingPools_.clear();
   protectedPools_.clear();
+  touchedThreads_.clear();
+  gpuPool_.reset();
+  aliveToken_.reset();
 
   allocator_.reset();
   device_.reset();
@@ -235,9 +253,9 @@ std::vector<std::string> Device::getAvailableExtensions() {
                           available_set.emplace(ext.extensionName);
                         });
 
-  const auto &required = instances::Config::instance().getDeviceExtensions();
-  const auto &optional =
-      instances::Config::instance().getOptionalDeviceExtensions();
+  auto snapshot = instances::Config::instance().snapshot();
+  const auto &required = snapshot.deviceExtensions;
+  const auto &optional = snapshot.optionalDeviceExtensions;
 
   std::vector<std::string> suported;
   std::vector<std::string> unsuported;
@@ -364,9 +382,31 @@ AllocatedBuffer Device::createBuffer(const BufferCreateInfo &info) {
   vk::BufferCreateInfo bufferInfo{
       {}, info.size, info.usage, vk::SharingMode::eExclusive};
 
+  vma::MemoryUsage resolvedMemUsage = info.memoryUsage;
+  vma::AllocationCreateFlags resolvedFlags = info.flags;
+
+  if (!info.flags && info.memoryUsage == vma::MemoryUsage::eAuto) {
+    switch (info.access) {
+    case BufferCreateInfo::Access::stagingUpload:
+      resolvedFlags = vma::AllocationCreateFlagBits::eHostAccessSequentialWrite;
+      break;
+    case BufferCreateInfo::Access::stagingReadback:
+      resolvedFlags = vma::AllocationCreateFlagBits::eHostAccessRandom;
+      break;
+    case BufferCreateInfo::Access::persistentMapping:
+      resolvedFlags =
+          vma::AllocationCreateFlagBits::eHostAccessSequentialWrite |
+          vma::AllocationCreateFlagBits::eMapped;
+      break;
+    case BufferCreateInfo::Access::gpuOnly:
+    default:
+      break;
+    }
+  }
+
   vma::AllocationCreateInfo allocInfo{};
-  allocInfo.usage = info.memoryUsage;
-  allocInfo.flags = info.flags;
+  allocInfo.usage = resolvedMemUsage;
+  allocInfo.flags = resolvedFlags;
 
   result.buffer =
       std::make_unique<vma::raii::Buffer>(*allocator_, bufferInfo, allocInfo);
@@ -382,6 +422,7 @@ AllocatedImage Device::createImage(const ImageCreateInfo &info) {
   result.extent = info.extent;
   result.mipLevels = info.mipLevels;
   result.arrayLayers = info.arrayLayers;
+  result.currentLayout = info.layout;
   result.name = info.debugName;
 
   vk::ImageCreateInfo imageInfo{{},
@@ -402,11 +443,22 @@ AllocatedImage Device::createImage(const ImageCreateInfo &info) {
   result.image =
       std::make_unique<vma::raii::Image>(*allocator_, imageInfo, allocInfo);
 
+  // --- Create image view if requested ---
+  if (info.createImageView) {
+    vk::ImageViewCreateInfo viewInfo{};
+    viewInfo.image = result.getImage();
+    viewInfo.viewType = info.viewType;
+    viewInfo.format = info.format;
+    viewInfo.components = info.components;
+    viewInfo.subresourceRange = info.subresourceRange;
+    result.view = std::make_unique<vk::raii::ImageView>(*device_, viewInfo);
+  }
+
   return result;
 }
 
 CommandBufferPool &Device::getGraphicsPool() {
-  ensureThreadCleanup();
+  markThreadTouched();
   std::thread::id tid = std::this_thread::get_id();
   {
     std::shared_lock lock(poolsMtx_);
@@ -418,14 +470,15 @@ CommandBufferPool &Device::getGraphicsPool() {
 
   std::unique_lock lock(poolsMtx_);
 
-  auto pool = std::make_unique<CommandBufferPool>(
-      device_, info_.queueFamilies.graphicsQueue.value());
+  const CommandPoolCreateInfo createInfo{
+      .queueFamily = info_.queueFamilies.graphicsQueue.value()};
+  auto pool = std::make_unique<CommandBufferPool>(device_, createInfo);
   auto &&[it, inserted] = graphicsPools_.emplace(tid, std::move(pool));
   return *it->second;
 }
 
 CommandBufferPool &Device::getComputePool() {
-  ensureThreadCleanup();
+  markThreadTouched();
   std::thread::id tid = std::this_thread::get_id();
   {
     std::shared_lock lock(poolsMtx_);
@@ -437,14 +490,15 @@ CommandBufferPool &Device::getComputePool() {
 
   std::unique_lock lock(poolsMtx_);
 
-  auto pool = std::make_unique<CommandBufferPool>(
-      device_, info_.queueFamilies.computeQueue.value());
+  const CommandPoolCreateInfo createInfo{
+      .queueFamily = info_.queueFamilies.computeQueue.value()};
+  auto pool = std::make_unique<CommandBufferPool>(device_, createInfo);
   auto &&[it, inserted] = computePools_.emplace(tid, std::move(pool));
   return *it->second;
 }
 
 CommandBufferPool &Device::getTransferPool() {
-  ensureThreadCleanup();
+  markThreadTouched();
   std::thread::id tid = std::this_thread::get_id();
   {
     std::shared_lock lock(poolsMtx_);
@@ -456,14 +510,15 @@ CommandBufferPool &Device::getTransferPool() {
 
   std::unique_lock lock(poolsMtx_);
 
-  auto pool = std::make_unique<CommandBufferPool>(
-      device_, info_.queueFamilies.transferQueue.value());
+  const CommandPoolCreateInfo createInfo{
+      .queueFamily = info_.queueFamilies.transferQueue.value()};
+  auto pool = std::make_unique<CommandBufferPool>(device_, createInfo);
   auto &&[it, inserted] = transferPools_.emplace(tid, std::move(pool));
   return *it->second;
 }
 
 CommandBufferPool &Device::getSparseBidingPool() {
-  ensureThreadCleanup();
+  markThreadTouched();
   std::thread::id tid = std::this_thread::get_id();
   {
     std::shared_lock lock(poolsMtx_);
@@ -475,14 +530,15 @@ CommandBufferPool &Device::getSparseBidingPool() {
 
   std::unique_lock lock(poolsMtx_);
 
-  auto pool = std::make_unique<CommandBufferPool>(
-      device_, info_.queueFamilies.sparseBindingQueue.value());
+  const CommandPoolCreateInfo createInfo{
+      .queueFamily = info_.queueFamilies.sparseBindingQueue.value()};
+  auto pool = std::make_unique<CommandBufferPool>(device_, createInfo);
   auto &&[it, inserted] = sparseBidingPools_.emplace(tid, std::move(pool));
   return *it->second;
 }
 
 CommandBufferPool &Device::getProtectedPool() {
-  ensureThreadCleanup();
+  markThreadTouched();
   std::thread::id tid = std::this_thread::get_id();
   {
     std::shared_lock lock(poolsMtx_);
@@ -494,21 +550,19 @@ CommandBufferPool &Device::getProtectedPool() {
 
   std::unique_lock lock(poolsMtx_);
 
-  auto pool = std::make_unique<CommandBufferPool>(
-      device_, info_.queueFamilies.protectedQueue.value());
+  const CommandPoolCreateInfo createInfo{
+      .queueFamily = info_.queueFamilies.protectedQueue.value()};
+  auto pool = std::make_unique<CommandBufferPool>(device_, createInfo);
   auto &&[it, inserted] = protectedPools_.emplace(tid, std::move(pool));
   return *it->second;
 }
 
-void Device::ensureThreadCleanup() {
-  auto &devices = getTouchedDevices();
-  auto it = std::ranges::find_if(
-      devices, [this](std::pair<std::thread::id, Device *> pair) {
-        return pair.second == this;
-      });
-
-  if (it == std::ranges::end(devices)) {
-    devices.emplace(std::this_thread::get_id(), this);
+void Device::markThreadTouched() {
+  const auto tid = std::this_thread::get_id();
+  std::unique_lock lock(poolsMtx_);
+  auto [_, inserted] = touchedThreads_.insert(tid);
+  if (inserted) {
+    touchedDevices.emplace_back(this, aliveToken_);
   }
 }
 
@@ -519,6 +573,9 @@ void Device::removeThreadPools(std::thread::id tid) {
   transferPools_.erase(tid);
   sparseBidingPools_.erase(tid);
   protectedPools_.erase(tid);
+  touchedThreads_.erase(tid);
 }
+
+size_t Device::workerCount() const noexcept { return gpuPool_->size(); }
 
 } // namespace graphics::vulkan::devices

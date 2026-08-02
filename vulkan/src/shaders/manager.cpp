@@ -52,13 +52,14 @@ Manager::loadShader(const Shader *tag,
           });
 
       if (!result) {
-        return std::unexpected<ShaderError>({.code = ShaderError::Code::creationFailed,
-                        .message = "Failed to emplace compiled shader"});
+        return std::unexpected<ShaderError>(
+            {.code = ShaderError::Code::creationFailed,
+             .message = "Failed to emplace compiled shader"});
       }
     }
   }
 
-  auto *compiledMod = shaderModuleRegistry_.get(tag); // returns ShaderModule*
+  auto compiledMod = shaderModuleRegistry_.getStored(tag);
 
   // 2. Check device cache
   auto &devReg = getDeviceRegistry(device);

@@ -3,6 +3,8 @@ import graphics;
 import std.compat;
 import vulkan;
 
+import concurrency;
+
 #include <vulkan/vulkan.h>
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
@@ -60,7 +62,12 @@ int main() {
         std::make_unique<vk::raii::SurfaceKHR>(*instancePtr, rawSurface);
 
     // 4. Pick a device (the one with the highest score)
-    devices::Manager deviceManager(instancePtr);
+
+    static concurrency::pool::Pool gpuPool{.name = "gpuPool"};
+    concurrency::pool::Manager pMan;
+    pMan.createPool(&gpuPool, 2);
+
+    devices::Manager deviceManager(instancePtr, pMan.getPool(&gpuPool).lock());
     auto entries = deviceManager.getDeviceEntries();
     if (entries.empty())
       throw std::runtime_error("No Vulkan device found");
@@ -102,16 +109,15 @@ int main() {
     dynamicInfo.tag.shaderTag = &g_shader;
     dynamicInfo.tag.layout = *pipelineLayout; // raw handle
     dynamicInfo.tag.flags = {};
-    dynamicInfo.topology = vk::PrimitiveTopology::eTriangleList;
-    dynamicInfo.colorFormats = {colorFormat};
-    dynamicInfo.colorCount = 1;
-    dynamicInfo.depthFormat = vk::Format::eUndefined;
-    dynamicInfo.stencilFormat = vk::Format::eUndefined;
-    dynamicInfo.samples = vk::SampleCountFlagBits::e1;
+    dynamicInfo.inputAssembly.topology = vk::PrimitiveTopology::eTriangleList;
+    dynamicInfo.attachments.color = {colorFormat};
+    dynamicInfo.attachments.depth = vk::Format::eUndefined;
+    dynamicInfo.attachments.stencil = vk::Format::eUndefined;
+    dynamicInfo.multisample.samples = vk::SampleCountFlagBits::e1;
 
     // ** Fix back‑face culling and depth test **
-    dynamicInfo.cullMode = vk::CullModeFlagBits::eNone;
-    dynamicInfo.depthTest = false;
+    dynamicInfo.rasterization.cullMode = vk::CullModeFlagBits::eNone;
+    dynamicInfo.depthStencil.depthTest = false;
 
     // 10. Get or create the dynamic pipeline
     auto pipelineResult =

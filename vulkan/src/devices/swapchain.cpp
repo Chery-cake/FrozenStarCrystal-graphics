@@ -281,15 +281,16 @@ bool Swapchain::recreateSwapchain(uint32_t newWidth, uint32_t newHeight) {
   return true;
 }
 
-void Swapchain::waitForFrameFence() {
+std::expected<void, vk::Result> Swapchain::waitForFrameFence() {
   // Wait until the fence for the current frame slot is signaled,
   // then reset it. This ensures we never overwrite an image still in flight.
   auto result = device_->waitForFences(*inFlightFences_[currentFrame_],
                                        vk::True, UINT64_MAX);
   if (result != vk::Result::eSuccess) {
-    throw std::runtime_error("Failed to wait for in-flight fence");
+    return std::unexpected<vk::Result>(result);
   }
   device_->resetFences(*inFlightFences_[currentFrame_]);
+  return {};
 }
 
 std::expected<uint32_t, Swapchain::PresentError> Swapchain::acquireNextImage() {
@@ -302,7 +303,13 @@ std::expected<uint32_t, Swapchain::PresentError> Swapchain::acquireNextImage() {
                                 "preceding submitAndPresent"});
   }
 
-  waitForFrameFence();
+  auto waitResult = waitForFrameFence();
+  if (!waitResult) {
+    return std::unexpected<PresentError>(
+        {.code = PresentError::Code::unknown,
+         .message = std::format("Failed to wait for in-flight fence: {}",
+                                vk::to_string(waitResult.error()))});
+  }
 
   auto &&[result, index] = swapchain_->acquireNextImage(
       UINT64_MAX, *imageAvailableSemaphores_[currentFrame_]);
@@ -316,7 +323,7 @@ std::expected<uint32_t, Swapchain::PresentError> Swapchain::acquireNextImage() {
   case vk::Result::eErrorOutOfDateKHR:
     needRecreation_.store(true, std::memory_order_release);
     return std::unexpected<PresentError>({.code = PresentError::Code::outOfDate,
-                                        .message = "Swapchain out of date"});
+                                          .message = "Swapchain out of date"});
   default:
     throw std::runtime_error("vkAcquireNextImageKHR failed");
   }
@@ -332,14 +339,15 @@ std::expected<vk::Result, Swapchain::PresentError> Swapchain::submitAndPresent(
   std::unique_lock lock(mtx_);
 
   if (!frameAcquired_) {
-    return std::unexpected<PresentError>({.code = PresentError::Code::notAcquired,
-                                        .message =
-                                            "submitAndPresent called without a "
-                                            "preceding acquireNextImage"});
+    return std::unexpected<PresentError>(
+        {.code = PresentError::Code::notAcquired,
+         .message = "submitAndPresent called without a "
+                    "preceding acquireNextImage"});
   }
   if (submitInfos.empty()) {
-    return std::unexpected<PresentError>({.code = PresentError::Code::noWorkSubmitted,
-                     .message = "At least one submitInfo is required"});
+    return std::unexpected<PresentError>(
+        {.code = PresentError::Code::noWorkSubmitted,
+         .message = "At least one submitInfo is required"});
   }
 
   // Pick the semaphores for the current in‑flight slot
@@ -396,12 +404,13 @@ std::expected<vk::Result, Swapchain::PresentError> Swapchain::submitAndPresent(
   } catch (const vk::OutOfDateKHRError &) {
     needRecreation_.store(true, std::memory_order_release);
     return std::unexpected<PresentError>({.code = PresentError::Code::outOfDate,
-                                        .message = "Swapchain out of date"});
+                                          .message = "Swapchain out of date"});
   } catch (const vk::DeviceLostError &e) {
-    return std::unexpected<PresentError>({.code = PresentError::Code::deviceLost,
-                                        .message = e.what()});
+    return std::unexpected<PresentError>(
+        {.code = PresentError::Code::deviceLost, .message = e.what()});
   } catch (const std::exception &e) {
-    return std::unexpected<PresentError>({.code = PresentError::Code::unknown, .message = e.what()});
+    return std::unexpected<PresentError>(
+        {.code = PresentError::Code::unknown, .message = e.what()});
   }
 
   // Advance frame index only on success

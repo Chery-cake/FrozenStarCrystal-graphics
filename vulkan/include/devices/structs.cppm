@@ -1,7 +1,5 @@
 module;
 
-#include <utility>
-
 #include "FrozenStarCrystal-graphics_export.h"
 
 export module graphics.vulkan.devices:structs;
@@ -115,6 +113,7 @@ struct FROZENSTARCRYSTAL_GRAPHICS_API AllocatedImage {
   std::unique_ptr<vk::raii::ImageView> view;
   vk::Format format;
   vk::Extent3D extent;
+  vk::ImageLayout currentLayout = vk::ImageLayout::eUndefined;
   uint32_t mipLevels = 1;
   uint32_t arrayLayers = 1;
   std::string name;
@@ -141,8 +140,16 @@ struct FROZENSTARCRYSTAL_GRAPHICS_API AllocatedImage {
 };
 
 struct FROZENSTARCRYSTAL_GRAPHICS_API BufferCreateInfo {
+  enum class Access : uint8_t {
+    gpuOnly,
+    stagingUpload,
+    stagingReadback,
+    persistentMapping,
+  };
+
   vk::DeviceSize size = 0;
   vk::BufferUsageFlags usage;
+  Access access = Access::gpuOnly;
   vma::MemoryUsage memoryUsage = vma::MemoryUsage::eAuto;
   vma::AllocationCreateFlags flags;
   std::string debugName;
@@ -157,9 +164,30 @@ struct FROZENSTARCRYSTAL_GRAPHICS_API ImageCreateInfo {
   vk::SampleCountFlagBits samples = vk::SampleCountFlagBits::e1;
   vk::ImageTiling tiling = vk::ImageTiling::eOptimal;
   vk::ImageUsageFlags usage;
+  vk::ImageLayout layout = vk::ImageLayout::eUndefined;
   vma::MemoryUsage memoryUsage = vma::MemoryUsage::eAuto;
   vma::AllocationCreateFlags flags;
+
+  // ----- View creation -----
+  bool createImageView = true;
+  vk::ImageViewType viewType = vk::ImageViewType::e2D;
+  vk::ComponentMapping components = {
+      vk::ComponentSwizzle::eR, vk::ComponentSwizzle::eG,
+      vk::ComponentSwizzle::eB, vk::ComponentSwizzle::eA};
+  vk::ImageSubresourceRange subresourceRange = {
+      vk::ImageAspectFlagBits::eColor, // default aspect
+      0,                               // base mip level
+      vk::RemainingMipLevels,          // use constant from Vulkan
+      0,                               // base array layer
+      vk::RemainingArrayLayers};
+
   std::string debugName;
+};
+
+struct FROZENSTARCRYSTAL_GRAPHICS_API CommandPoolCreateInfo {
+  uint32_t queueFamily;
+  vk::CommandPoolCreateFlags flags =
+      vk::CommandPoolCreateFlagBits::eResetCommandBuffer;
 };
 
 struct FROZENSTARCRYSTAL_GRAPHICS_API CommandBufferPool {
@@ -167,26 +195,19 @@ struct FROZENSTARCRYSTAL_GRAPHICS_API CommandBufferPool {
   std::vector<vk::raii::CommandBuffer> buffers;
   std::shared_ptr<vk::raii::Device> device;
 
-  CommandBufferPool(std::shared_ptr<vk::raii::Device> devicePtr,
-                    uint32_t queueFamily) {
-    device = std::move(devicePtr);
-    vk::CommandPoolCreateInfo createInfo = {
-        vk::CommandPoolCreateFlagBits::eResetCommandBuffer, queueFamily};
-
-    pool = std::make_unique<vk::raii::CommandPool>(*device, createInfo);
-  }
-  CommandBufferPool(std::shared_ptr<vk::raii::Device> devicePtr,
-                    vk::CommandPoolCreateInfo &createInfo) {
-    device = std::move(devicePtr);
-    pool = std::make_unique<vk::raii::CommandPool>(*device, createInfo);
+  CommandBufferPool(const std::shared_ptr<vk::raii::Device> &devicePtr,
+                    const CommandPoolCreateInfo &createInfo) {
+    vk::CommandPoolCreateInfo info = {createInfo.flags, createInfo.queueFamily};
+    device = devicePtr;
+    pool = std::make_unique<vk::raii::CommandPool>(*devicePtr, info);
   }
   ~CommandBufferPool() = default;
 
   // Delete move & copy
   CommandBufferPool(const CommandBufferPool &) = delete;
   CommandBufferPool &operator=(const CommandBufferPool &) = delete;
-  CommandBufferPool(CommandBufferPool &&) = delete;
-  CommandBufferPool &operator=(CommandBufferPool &&) = delete;
+  CommandBufferPool(CommandBufferPool &&) noexcept = default;
+  CommandBufferPool &operator=(CommandBufferPool &&) noexcept = default;
 
   void reset() {
     buffers.clear();

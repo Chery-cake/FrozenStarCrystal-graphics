@@ -63,8 +63,8 @@ Manager::buildDynamic(const DynamicPipelineInfo &info,
 
   // 4. Input assembly
   vk::PipelineInputAssemblyStateCreateInfo inputAssembly{};
-  inputAssembly.setTopology(info.topology)
-      .setPrimitiveRestartEnable(info.primitiveRestart);
+  inputAssembly.setTopology(info.inputAssembly.topology)
+      .setPrimitiveRestartEnable(info.inputAssembly.primitiveRestart);
 
   // 5. Viewport & scissor (dynamic)
   vk::PipelineViewportStateCreateInfo viewportState{};
@@ -72,23 +72,23 @@ Manager::buildDynamic(const DynamicPipelineInfo &info,
 
   // 6. Rasterization
   vk::PipelineRasterizationStateCreateInfo rasterizer{};
-  rasterizer.setPolygonMode(info.polygonMode)
-      .setCullMode(info.cullMode)
-      .setFrontFace(info.frontFace)
-      .setDepthClampEnable(info.depthClamp)
-      .setDepthBiasEnable(info.depthBias)
-      .setLineWidth(info.lineWidth);
+  rasterizer.setPolygonMode(info.rasterization.polygonMode)
+      .setCullMode(info.rasterization.cullMode)
+      .setFrontFace(info.rasterization.frontFace)
+      .setDepthClampEnable(info.rasterization.depthClamp)
+      .setDepthBiasEnable(info.rasterization.depthBias)
+      .setLineWidth(info.rasterization.lineWidth);
 
   // 7. Multisample
   vk::PipelineMultisampleStateCreateInfo multisample{};
-  multisample.setRasterizationSamples(info.samples);
+  multisample.setRasterizationSamples(info.multisample.samples);
 
   // 8. Depth / stencil
   vk::PipelineDepthStencilStateCreateInfo depthStencil{};
-  depthStencil.setDepthTestEnable(info.depthTest)
-      .setDepthWriteEnable(info.depthWrite)
-      .setDepthCompareOp(info.depthCompareOp)
-      .setStencilTestEnable(info.stencilTest);
+  depthStencil.setDepthTestEnable(info.depthStencil.depthTest)
+      .setDepthWriteEnable(info.depthStencil.depthWrite)
+      .setDepthCompareOp(info.depthStencil.depthCompare)
+      .setStencilTestEnable(info.depthStencil.stencilTest);
 
   // 9. Colour blend
   std::vector<vk::PipelineColorBlendAttachmentState> blendAttachments;
@@ -98,7 +98,7 @@ Manager::buildDynamic(const DynamicPipelineInfo &info,
     defaultBlend.setColorWriteMask(
         vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
         vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA);
-    blendAttachments.resize(info.colorFormats.size(), defaultBlend);
+    blendAttachments.resize(info.attachments.color.size(), defaultBlend);
   } else {
     blendAttachments = info.colorBlendAttachments;
   }
@@ -116,9 +116,9 @@ Manager::buildDynamic(const DynamicPipelineInfo &info,
 
   // 11. Dynamic rendering create info (pNext chain)
   vk::PipelineRenderingCreateInfo renderingInfo{};
-  renderingInfo.setColorAttachmentFormats(info.colorFormats)
-      .setDepthAttachmentFormat(info.depthFormat)
-      .setStencilAttachmentFormat(info.stencilFormat);
+  renderingInfo.setColorAttachmentFormats(info.attachments.color)
+      .setDepthAttachmentFormat(info.attachments.depth)
+      .setStencilAttachmentFormat(info.attachments.stencil);
 
   // 12. Assemble the pipeline
   vk::GraphicsPipelineCreateInfo pipelineCreateInfo{};
@@ -175,15 +175,30 @@ Manager::buildStatic(const StaticPipelineInfo &info,
 
   // 4. Input assembly
   vk::PipelineInputAssemblyStateCreateInfo inputAssembly{};
-  inputAssembly.setTopology(info.topology)
-      .setPrimitiveRestartEnable(info.primitiveRestart);
+  inputAssembly.setTopology(info.inputAssembly.topology)
+      .setPrimitiveRestartEnable(info.inputAssembly.primitiveRestart);
 
   // 5. Viewport (static, but we still provide a count)
   vk::PipelineViewportStateCreateInfo viewportState{};
   viewportState.setViewportCount(1).setScissorCount(1);
 
-  // 6. Rasterization, depth/stencil, multisample – use stored structs
-  //    (they must be properly filled; defaults are fine if zero)
+  // 6. Rasterization, depth/stencil, multisample
+  vk::PipelineRasterizationStateCreateInfo rasterizer{};
+  rasterizer.setPolygonMode(info.rasterization.polygonMode)
+      .setCullMode(info.rasterization.cullMode)
+      .setFrontFace(info.rasterization.frontFace)
+      .setDepthClampEnable(info.rasterization.depthClamp)
+      .setDepthBiasEnable(info.rasterization.depthBias)
+      .setLineWidth(info.rasterization.lineWidth);
+
+  vk::PipelineDepthStencilStateCreateInfo depthStencil{};
+  depthStencil.setDepthTestEnable(info.depthStencil.depthTest)
+      .setDepthWriteEnable(info.depthStencil.depthWrite)
+      .setDepthCompareOp(info.depthStencil.depthCompare)
+      .setStencilTestEnable(info.depthStencil.stencilTest);
+
+  vk::PipelineMultisampleStateCreateInfo multisample{};
+  multisample.setRasterizationSamples(info.multisample.samples);
 
   // 7. Colour blend
   vk::PipelineColorBlendStateCreateInfo colorBlend = info.colorBlend;
@@ -207,9 +222,9 @@ Manager::buildStatic(const StaticPipelineInfo &info,
       .setPVertexInputState(&vertexInput)
       .setPInputAssemblyState(&inputAssembly)
       .setPViewportState(&viewportState)
-      .setPRasterizationState(&info.rasterizer)
-      .setPMultisampleState(&info.multisample)
-      .setPDepthStencilState(&info.depthStencil)
+      .setPRasterizationState(&rasterizer)
+      .setPMultisampleState(&multisample)
+      .setPDepthStencilState(&depthStencil)
       .setPColorBlendState(&colorBlend)
       .setPDynamicState(&dynamicState)
       .setLayout(info.tag.layout)
@@ -235,7 +250,8 @@ Manager::getOrCreate(const DynamicPipelineInfo &info,
     std::shared_lock rlock(cacheMtx_);
     auto devIt = cache_.find(device);
     if (devIt != cache_.end()) {
-      auto pIt = devIt->second.dynamicPipelines.find(info.tag);
+      std::shared_lock lock(devIt->second.entryMtx);
+      auto pIt = devIt->second.dynamicPipelines.find(info);
       if (pIt != devIt->second.dynamicPipelines.end()) {
         return pIt->second;
       }
@@ -249,10 +265,20 @@ Manager::getOrCreate(const DynamicPipelineInfo &info,
   }
 
   // 3. Write lock to insert
-  std::unique_lock wlock(cacheMtx_);
-  // Re-check: another thread may have inserted while we were building
-  auto &entry = cache_[device];
-  auto [it, inserted] = entry.dynamicPipelines.emplace(info.tag, *pipeline);
+  DeviceEntry *entry;
+  {
+    std::unique_lock wlock(cacheMtx_);
+    auto devIt = cache_.find(device);
+    if (devIt != cache_.end()) {
+      entry = &devIt->second;
+
+    } else {
+      entry = &cache_[device];
+    }
+  }
+
+  std::unique_lock lock(entry->entryMtx);
+  auto [it, inserted] = entry->dynamicPipelines.emplace(info.tag, *pipeline);
   return it->second;
 }
 
@@ -264,7 +290,8 @@ Manager::getOrCreate(const StaticPipelineInfo &info,
     std::shared_lock rlock(cacheMtx_);
     auto devIt = cache_.find(device);
     if (devIt != cache_.end()) {
-      auto pIt = devIt->second.staticPipelines.find(info.tag);
+      std::shared_lock lock(devIt->second.entryMtx);
+      auto pIt = devIt->second.staticPipelines.find(info);
       if (pIt != devIt->second.staticPipelines.end()) {
         return pIt->second;
       }
@@ -278,10 +305,20 @@ Manager::getOrCreate(const StaticPipelineInfo &info,
   }
 
   // 3. Write lock to insert
-  std::unique_lock wlock(cacheMtx_);
-  // Re-check: another thread may have inserted while we were building
-  auto &entry = cache_[device];
-  auto [it, inserted] = entry.staticPipelines.emplace(info.tag, *pipeline);
+  DeviceEntry *entry;
+  {
+    std::unique_lock wlock(cacheMtx_);
+    auto devIt = cache_.find(device);
+    if (devIt != cache_.end()) {
+      entry = &devIt->second;
+
+    } else {
+      entry = &cache_[device];
+    }
+  }
+
+  std::unique_lock lock(entry->entryMtx);
+  auto [it, inserted] = entry->staticPipelines.emplace(info.tag, *pipeline);
   return it->second;
 }
 
@@ -292,17 +329,17 @@ void Manager::invalidateShader(const shaders::Shader *tag) {
     DeviceEntry &cache = pair.second;
 
     std::erase_if(cache.dynamicPipelines, [&tag](const auto &pair) {
-      return pair.first.shaderTag == tag;
+      return pair.first.tag.shaderTag == tag;
     });
     std::erase_if(cache.staticPipelines, [&tag](const auto &pair) {
-      return pair.first.shaderTag == tag;
+      return pair.first.tag.shaderTag == tag;
     });
   });
 }
 
 void Manager::invalidateDevice(
     const std::shared_ptr<vk::raii::Device> &device) {
-  std::shared_lock lock(cacheMtx_);
+  std::unique_lock lock(cacheMtx_);
 
   std::erase_if(cache_,
                 [&device](const auto &pair) { return pair.first == device; });
