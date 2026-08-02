@@ -281,15 +281,16 @@ bool Swapchain::recreateSwapchain(uint32_t newWidth, uint32_t newHeight) {
   return true;
 }
 
-void Swapchain::waitForFrameFence() {
+std::expected<void, vk::Result> Swapchain::waitForFrameFence() {
   // Wait until the fence for the current frame slot is signaled,
   // then reset it. This ensures we never overwrite an image still in flight.
   auto result = device_->waitForFences(*inFlightFences_[currentFrame_],
                                        vk::True, UINT64_MAX);
   if (result != vk::Result::eSuccess) {
-    throw std::runtime_error("Failed to wait for in-flight fence");
+    return std::unexpected(result);
   }
   device_->resetFences(*inFlightFences_[currentFrame_]);
+  return {};
 }
 
 std::expected<uint32_t, Swapchain::PresentError> Swapchain::acquireNextImage() {
@@ -302,7 +303,14 @@ std::expected<uint32_t, Swapchain::PresentError> Swapchain::acquireNextImage() {
                                 "preceding submitAndPresent"});
   }
 
-  waitForFrameFence();
+  auto waitResult = waitForFrameFence();
+  if (!waitResult) {
+    return std::unexpected<PresentError>(
+        {.code = PresentError::Code::unknown,
+         .message =
+             std::format("Failed to wait for in-flight fence: {}",
+                         vk::to_string(waitResult.error()))});
+  }
 
   auto &&[result, index] = swapchain_->acquireNextImage(
       UINT64_MAX, *imageAvailableSemaphores_[currentFrame_]);

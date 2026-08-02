@@ -26,14 +26,12 @@ void transfer(
 
 // Image -> Buffer (whole image, mip 0, layer 0)
 void transfer(
-    Device &device, const AllocatedImage &src,
-    vk::ImageLayout srcCurrentLayout, // caller must provide current layout
-    AllocatedBuffer &dst, vk::DeviceSize bufferOffset);
+    Device &device, const AllocatedImage &src, AllocatedBuffer &dst,
+    vk::DeviceSize bufferOffset);
 
 // Image -> Image (whole images, mip 0, layer 0)
 void transfer(
-    Device &device, const AllocatedImage &src, vk::ImageLayout srcCurrentLayout,
-    AllocatedImage &dst, vk::ImageLayout dstCurrentLayout,
+    Device &device, const AllocatedImage &src, AllocatedImage &dst,
     vk::ImageLayout dstFinalLayout = vk::ImageLayout::eShaderReadOnlyOptimal);
 
 // ---------- Swapchain helpers (record into existing command buffer) ----------
@@ -86,23 +84,75 @@ void transfer(
 
 // Image -> Buffer  (different devices)
 void transfer(Device &srcDevice, const AllocatedImage &src,
-              vk::ImageLayout srcCurrentLayout, Device &dstDevice,
+              Device &dstDevice,
               AllocatedBuffer &dst, vk::DeviceSize dstOffset);
 
 // Image -> Image  (different devices)
 void transfer(
-    Device &srcDevice, const AllocatedImage &src,
-    vk::ImageLayout srcCurrentLayout, Device &dstDevice, AllocatedImage &dst,
+    Device &srcDevice, const AllocatedImage &src, Device &dstDevice,
+    AllocatedImage &dst,
     vk::ImageLayout dstFinalLayout = vk::ImageLayout::eShaderReadOnlyOptimal);
 
 // (Swapchain inter‑device not provided – swapchain is tightly bound to its
 // device)
 
-} // namespace graphics::vulkan::devices
+// ---------- format / size helpers ----------
 
-// TODO
-// add more overloads for images transfers
-// for more ranges, mip levels, regions, and multiple images at a time
-//
-// verify vk::AccessFlagBits used, add option to overwrite default values,
-// especially vk::AccessFlagBits::eNone
+// Returns bytes per texel for uncompressed formats; bytes per 4×4 texel block
+// for BCn block-compressed formats.  Pass a fallback to suppress the exception
+// for unknown formats.
+vk::DeviceSize formatSize(vk::Format format,
+                          std::optional<vk::DeviceSize> fallback = std::nullopt);
+
+// Returns true when format is a BCn block-compressed format.
+bool isBlockCompressed(vk::Format format);
+
+// Correct byte size for a staging/readback buffer covering the whole image.
+// Handles BCn by aligning dimensions up to the 4×4 block boundary.
+vk::DeviceSize imageDataSize(vk::Format format, vk::Extent3D extent);
+
+// ---------- async variants (offloaded to Device's thread pool) ----------
+
+// Each async overload mirrors the sync version but returns std::future<void>.
+// The returned future completes when the GPU transfer is finished.
+
+std::future<void> transferAsync(Device &device, const AllocatedBuffer &src,
+                                vk::DeviceSize srcOffset, AllocatedBuffer &dst,
+                                vk::DeviceSize dstOffset, vk::DeviceSize size);
+
+std::future<void> transferAsync(Device &device, const AllocatedBuffer &src,
+                                vk::DeviceSize bufferOffset, AllocatedImage &dst,
+                                vk::ImageLayout dstFinalLayout =
+                                    vk::ImageLayout::eShaderReadOnlyOptimal);
+
+std::future<void> transferAsync(Device &device, const AllocatedImage &src,
+                                AllocatedBuffer &dst,
+                                vk::DeviceSize bufferOffset);
+
+std::future<void> transferAsync(Device &device, const AllocatedImage &src,
+                                AllocatedImage &dst,
+                                vk::ImageLayout dstFinalLayout =
+                                    vk::ImageLayout::eShaderReadOnlyOptimal);
+
+// Cross-device async variants
+std::future<void> transferAsync(Device &srcDevice, const AllocatedBuffer &src,
+                                vk::DeviceSize srcOffset, Device &dstDevice,
+                                AllocatedBuffer &dst, vk::DeviceSize dstOffset,
+                                vk::DeviceSize size);
+
+std::future<void> transferAsync(Device &srcDevice, const AllocatedBuffer &src,
+                                vk::DeviceSize srcOffset, Device &dstDevice,
+                                AllocatedImage &dst,
+                                vk::ImageLayout dstFinalLayout =
+                                    vk::ImageLayout::eShaderReadOnlyOptimal);
+
+std::future<void> transferAsync(Device &srcDevice, const AllocatedImage &src,
+                                Device &dstDevice, AllocatedBuffer &dst,
+                                vk::DeviceSize dstOffset);
+
+std::future<void> transferAsync(Device &srcDevice, const AllocatedImage &src,
+                                Device &dstDevice, AllocatedImage &dst,
+                                vk::ImageLayout dstFinalLayout =
+                                    vk::ImageLayout::eShaderReadOnlyOptimal);
+
+} // namespace graphics::vulkan::devices

@@ -10,6 +10,15 @@ import vulkan;
 
 export namespace graphics::vulkan::instances {
 
+struct FROZENSTARCRYSTAL_GRAPHICS_API InstanceConfigSnapshot {
+  std::vector<std::string> instanceExtensions;
+  std::vector<std::string> deviceExtensions;
+  std::vector<std::string> instanceLayers;
+  std::vector<std::string> optionalInstanceExtensions;
+  std::vector<std::string> optionalDeviceExtensions;
+  std::vector<std::string> optionalInstanceLayers;
+};
+
 class FROZENSTARCRYSTAL_GRAPHICS_API Config {
   private:
     bool needUpdate = false;
@@ -100,6 +109,18 @@ class FROZENSTARCRYSTAL_GRAPHICS_API Config {
     }
     const std::vector<std::string> &getOptionalInstanceLayers() const {
         return optionalInstanceLayers;
+    }
+
+    [[nodiscard]] InstanceConfigSnapshot snapshot() const {
+        std::lock_guard lock(mtx);
+        return InstanceConfigSnapshot{
+            .instanceExtensions = instanceExtensions,
+            .deviceExtensions = deviceExtensions,
+            .instanceLayers = instanceLayers,
+            .optionalInstanceExtensions = optionalInstanceExtensions,
+            .optionalDeviceExtensions = optionalDeviceExtensions,
+            .optionalInstanceLayers = optionalInstanceLayers,
+        };
     }
 };
 

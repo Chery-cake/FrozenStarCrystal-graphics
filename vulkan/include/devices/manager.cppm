@@ -5,6 +5,7 @@ module;
 export module graphics.vulkan.devices:manager;
 
 import std.compat;
+import concurrency.pool.coroutine;
 
 import :structs;
 import :device;
@@ -82,6 +83,33 @@ public:
              return entry.device->getWindows().size() == 0;
            }) |
            std::ranges::to<std::vector<DeviceEntry>>();
+  }
+
+  template <concurrency::pool::coroutine::policy::Queue QP =
+                concurrency::pool::coroutine::policy::Queue::Inline>
+  [[nodiscard]] concurrency::pool::coroutine::Scheduler<QP>
+  scheduleOnDevice(uint32_t deviceIndex) {
+    std::unique_lock lock(mtx_);
+    return deviceEntries_.at(deviceIndex).device->schedule<QP>();
+  }
+
+  template <typename F>
+  [[nodiscard]] std::vector<std::future<void>> broadcastToAllDevices(F &&fn) {
+    std::vector<std::shared_ptr<Device>> devices;
+    {
+      std::unique_lock lock(mtx_);
+      devices.reserve(deviceEntries_.size());
+      for (const auto &entry : deviceEntries_) {
+        devices.push_back(entry.device);
+      }
+    }
+
+    std::vector<std::future<void>> futures;
+    futures.reserve(devices.size());
+    for (const auto &device : devices) {
+      futures.push_back(device->submit([fn]() mutable { std::invoke(fn); }));
+    }
+    return futures;
   }
 };
 

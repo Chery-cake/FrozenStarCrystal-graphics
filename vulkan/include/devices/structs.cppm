@@ -117,6 +117,7 @@ struct FROZENSTARCRYSTAL_GRAPHICS_API AllocatedImage {
   vk::Extent3D extent;
   uint32_t mipLevels = 1;
   uint32_t arrayLayers = 1;
+  vk::ImageLayout currentLayout = vk::ImageLayout::eUndefined;
   std::string name;
 
   AllocatedImage() = default;
@@ -141,8 +142,16 @@ struct FROZENSTARCRYSTAL_GRAPHICS_API AllocatedImage {
 };
 
 struct FROZENSTARCRYSTAL_GRAPHICS_API BufferCreateInfo {
+  enum class Access : uint8_t {
+    eGpuOnly,
+    eStagingUpload,
+    eStagingReadback,
+    ePersistentMapping,
+  };
+
   vk::DeviceSize size = 0;
   vk::BufferUsageFlags usage;
+  Access access = Access::eGpuOnly;
   vma::MemoryUsage memoryUsage = vma::MemoryUsage::eAuto;
   vma::AllocationCreateFlags flags;
   std::string debugName;
@@ -159,7 +168,27 @@ struct FROZENSTARCRYSTAL_GRAPHICS_API ImageCreateInfo {
   vk::ImageUsageFlags usage;
   vma::MemoryUsage memoryUsage = vma::MemoryUsage::eAuto;
   vma::AllocationCreateFlags flags;
+  vk::ImageLayout layout = vk::ImageLayout::eUndefined;
+
+  bool createImageView = true;
+  vk::ImageViewType viewType = vk::ImageViewType::e2D;
+  vk::ComponentMapping components = {
+      vk::ComponentSwizzle::eR, vk::ComponentSwizzle::eG,
+      vk::ComponentSwizzle::eB, vk::ComponentSwizzle::eA};
+  vk::ImageSubresourceRange subresourceRange = {
+      vk::ImageAspectFlagBits::eColor,
+      0,
+      vk::RemainingMipLevels,
+      0,
+      vk::RemainingArrayLayers};
+
   std::string debugName;
+};
+
+struct FROZENSTARCRYSTAL_GRAPHICS_API CommandPoolCreateInfo {
+  uint32_t queueFamily;
+  vk::CommandPoolCreateFlags flags =
+      vk::CommandPoolCreateFlagBits::eResetCommandBuffer;
 };
 
 struct FROZENSTARCRYSTAL_GRAPHICS_API CommandBufferPool {
@@ -168,25 +197,19 @@ struct FROZENSTARCRYSTAL_GRAPHICS_API CommandBufferPool {
   std::shared_ptr<vk::raii::Device> device;
 
   CommandBufferPool(std::shared_ptr<vk::raii::Device> devicePtr,
-                    uint32_t queueFamily) {
+                    const CommandPoolCreateInfo &createInfo) {
     device = std::move(devicePtr);
-    vk::CommandPoolCreateInfo createInfo = {
-        vk::CommandPoolCreateFlagBits::eResetCommandBuffer, queueFamily};
-
-    pool = std::make_unique<vk::raii::CommandPool>(*device, createInfo);
-  }
-  CommandBufferPool(std::shared_ptr<vk::raii::Device> devicePtr,
-                    vk::CommandPoolCreateInfo &createInfo) {
-    device = std::move(devicePtr);
-    pool = std::make_unique<vk::raii::CommandPool>(*device, createInfo);
+    vk::CommandPoolCreateInfo vkCreateInfo = {createInfo.flags,
+                                              createInfo.queueFamily};
+    pool = std::make_unique<vk::raii::CommandPool>(*device, vkCreateInfo);
   }
   ~CommandBufferPool() = default;
 
-  // Delete move & copy
+  // Delete copy
   CommandBufferPool(const CommandBufferPool &) = delete;
   CommandBufferPool &operator=(const CommandBufferPool &) = delete;
-  CommandBufferPool(CommandBufferPool &&) = delete;
-  CommandBufferPool &operator=(CommandBufferPool &&) = delete;
+  CommandBufferPool(CommandBufferPool &&) noexcept = default;
+  CommandBufferPool &operator=(CommandBufferPool &&) noexcept = default;
 
   void reset() {
     buffers.clear();
