@@ -108,12 +108,70 @@ vk::DeviceSize formatSize(vk::Format format,
   case vk::Format::eG8B8R82Plane420Unorm:
   case vk::Format::eG8B8R83Plane420Unorm:
     return 1;
+
+  // Block-compressed formats: returned size is bytes per 4×4 texel block.
+  // Use imageDataSize() for correct total buffer size calculations.
+  case vk::Format::eBc1RgbUnormBlock:
+  case vk::Format::eBc1RgbSrgbBlock:
+  case vk::Format::eBc1RgbaUnormBlock:
+  case vk::Format::eBc1RgbaSrgbBlock:
+  case vk::Format::eBc4UnormBlock:
+  case vk::Format::eBc4SnormBlock:
+    return 8; // 8 bytes per 4×4 block
+  case vk::Format::eBc2UnormBlock:
+  case vk::Format::eBc2SrgbBlock:
+  case vk::Format::eBc3UnormBlock:
+  case vk::Format::eBc3SrgbBlock:
+  case vk::Format::eBc5UnormBlock:
+  case vk::Format::eBc5SnormBlock:
+  case vk::Format::eBc6HUfloatBlock:
+  case vk::Format::eBc6HSfloatBlock:
+  case vk::Format::eBc7UnormBlock:
+  case vk::Format::eBc7SrgbBlock:
+    return 16; // 16 bytes per 4×4 block
+
   default:
     if (fallback.has_value()) {
       return fallback.value();
     }
     throw std::runtime_error("Unsupported format");
   }
+}
+
+bool isBlockCompressed(vk::Format fmt) {
+  switch (fmt) {
+  case vk::Format::eBc1RgbUnormBlock:
+  case vk::Format::eBc1RgbSrgbBlock:
+  case vk::Format::eBc1RgbaUnormBlock:
+  case vk::Format::eBc1RgbaSrgbBlock:
+  case vk::Format::eBc2UnormBlock:
+  case vk::Format::eBc2SrgbBlock:
+  case vk::Format::eBc3UnormBlock:
+  case vk::Format::eBc3SrgbBlock:
+  case vk::Format::eBc4UnormBlock:
+  case vk::Format::eBc4SnormBlock:
+  case vk::Format::eBc5UnormBlock:
+  case vk::Format::eBc5SnormBlock:
+  case vk::Format::eBc6HUfloatBlock:
+  case vk::Format::eBc6HSfloatBlock:
+  case vk::Format::eBc7UnormBlock:
+  case vk::Format::eBc7SrgbBlock:
+    return true;
+  default:
+    return false;
+  }
+}
+
+vk::DeviceSize imageDataSize(vk::Format format, vk::Extent3D extent) {
+  if (isBlockCompressed(format)) {
+    // BCn formats pack 4×4 texel blocks; align dimensions up to block boundary
+    const vk::DeviceSize blocksX = (extent.width  + 3u) / 4u;
+    const vk::DeviceSize blocksY = (extent.height + 3u) / 4u;
+    return blocksX * blocksY * extent.depth * formatSize(format);
+  }
+  return static_cast<vk::DeviceSize>(extent.width) *
+         static_cast<vk::DeviceSize>(extent.height) *
+         static_cast<vk::DeviceSize>(extent.depth) * formatSize(format);
 }
 
 vk::ImageAspectFlags aspectFromFormat(vk::Format fmt) {
@@ -420,9 +478,7 @@ void transfer(Device &srcDevice, const AllocatedBuffer &src,
 void transfer(Device &srcDevice, const AllocatedBuffer &src,
               vk::DeviceSize srcOffset, Device &dstDevice, AllocatedImage &dst,
               vk::ImageLayout dstFinalLayout) {
-  vk::DeviceSize imageSize =
-      static_cast<vk::DeviceSize>(dst.extent.width * dst.extent.height) *
-      formatSize(dst.format);
+  vk::DeviceSize imageSize = imageDataSize(dst.format, dst.extent);
   auto staging = createStagingBuffer(srcDevice, imageSize);
   transfer(srcDevice, src, srcOffset, staging, 0, imageSize);
   transfer(dstDevice, staging, 0, dst, dstFinalLayout);
@@ -430,9 +486,7 @@ void transfer(Device &srcDevice, const AllocatedBuffer &src,
 
 void transfer(Device &srcDevice, const AllocatedImage &src, Device &dstDevice,
               AllocatedBuffer &dst, vk::DeviceSize dstOffset) {
-  vk::DeviceSize imageSize =
-      static_cast<vk::DeviceSize>(src.extent.width * src.extent.height) *
-      formatSize(src.format);
+  vk::DeviceSize imageSize = imageDataSize(src.format, src.extent);
   auto staging = createStagingBuffer(srcDevice, imageSize);
   transfer(srcDevice, src, staging, 0);
   transfer(dstDevice, staging, 0, dst, dstOffset, imageSize);
@@ -440,12 +494,82 @@ void transfer(Device &srcDevice, const AllocatedImage &src, Device &dstDevice,
 
 void transfer(Device &srcDevice, const AllocatedImage &src, Device &dstDevice,
               AllocatedImage &dst, vk::ImageLayout dstFinalLayout) {
-  vk::DeviceSize imageSize =
-      static_cast<vk::DeviceSize>(src.extent.width * src.extent.height) *
-      formatSize(src.format);
+  vk::DeviceSize imageSize = imageDataSize(src.format, src.extent);
   auto staging = createStagingBuffer(srcDevice, imageSize);
   transfer(srcDevice, src, staging, 0);
   transfer(dstDevice, staging, 0, dst, dstFinalLayout);
+}
+
+// ---------- async variants ----------
+
+std::future<void> transferAsync(Device &device, const AllocatedBuffer &src,
+                                vk::DeviceSize srcOffset, AllocatedBuffer &dst,
+                                vk::DeviceSize dstOffset, vk::DeviceSize size) {
+  return device.submit([&device, &src, srcOffset, &dst, dstOffset, size]() {
+    transfer(device, src, srcOffset, dst, dstOffset, size);
+  });
+}
+
+std::future<void> transferAsync(Device &device, const AllocatedBuffer &src,
+                                vk::DeviceSize bufferOffset, AllocatedImage &dst,
+                                vk::ImageLayout dstFinalLayout) {
+  return device.submit([&device, &src, bufferOffset, &dst, dstFinalLayout]() {
+    transfer(device, src, bufferOffset, dst, dstFinalLayout);
+  });
+}
+
+std::future<void> transferAsync(Device &device, const AllocatedImage &src,
+                                AllocatedBuffer &dst,
+                                vk::DeviceSize bufferOffset) {
+  return device.submit([&device, &src, &dst, bufferOffset]() {
+    transfer(device, src, dst, bufferOffset);
+  });
+}
+
+std::future<void> transferAsync(Device &device, const AllocatedImage &src,
+                                AllocatedImage &dst,
+                                vk::ImageLayout dstFinalLayout) {
+  return device.submit([&device, &src, &dst, dstFinalLayout]() {
+    transfer(device, src, dst, dstFinalLayout);
+  });
+}
+
+std::future<void> transferAsync(Device &srcDevice, const AllocatedBuffer &src,
+                                vk::DeviceSize srcOffset, Device &dstDevice,
+                                AllocatedBuffer &dst, vk::DeviceSize dstOffset,
+                                vk::DeviceSize size) {
+  return srcDevice.submit(
+      [&srcDevice, &src, srcOffset, &dstDevice, &dst, dstOffset, size]() {
+        transfer(srcDevice, src, srcOffset, dstDevice, dst, dstOffset, size);
+      });
+}
+
+std::future<void> transferAsync(Device &srcDevice, const AllocatedBuffer &src,
+                                vk::DeviceSize srcOffset, Device &dstDevice,
+                                AllocatedImage &dst,
+                                vk::ImageLayout dstFinalLayout) {
+  return srcDevice.submit(
+      [&srcDevice, &src, srcOffset, &dstDevice, &dst, dstFinalLayout]() {
+        transfer(srcDevice, src, srcOffset, dstDevice, dst, dstFinalLayout);
+      });
+}
+
+std::future<void> transferAsync(Device &srcDevice, const AllocatedImage &src,
+                                Device &dstDevice, AllocatedBuffer &dst,
+                                vk::DeviceSize dstOffset) {
+  return srcDevice.submit(
+      [&srcDevice, &src, &dstDevice, &dst, dstOffset]() {
+        transfer(srcDevice, src, dstDevice, dst, dstOffset);
+      });
+}
+
+std::future<void> transferAsync(Device &srcDevice, const AllocatedImage &src,
+                                Device &dstDevice, AllocatedImage &dst,
+                                vk::ImageLayout dstFinalLayout) {
+  return srcDevice.submit(
+      [&srcDevice, &src, &dstDevice, &dst, dstFinalLayout]() {
+        transfer(srcDevice, src, dstDevice, dst, dstFinalLayout);
+      });
 }
 
 } // namespace graphics::vulkan::devices
