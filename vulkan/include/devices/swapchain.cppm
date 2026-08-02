@@ -93,7 +93,7 @@ private:
 
   std::mutex mtx_;
 
-  void waitForFrameFence();
+  [[nodiscard]] std::expected<void, vk::Result> waitForFrameFence();
 
 public:
   Swapchain(const std::shared_ptr<vk::raii::PhysicalDevice> &physicalDevice,

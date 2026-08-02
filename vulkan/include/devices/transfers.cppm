@@ -26,14 +26,12 @@ void transfer(
 
 // Image -> Buffer (whole image, mip 0, layer 0)
 void transfer(
-    Device &device, const AllocatedImage &src,
-    vk::ImageLayout srcCurrentLayout, // caller must provide current layout
-    AllocatedBuffer &dst, vk::DeviceSize bufferOffset);
+    Device &device, const AllocatedImage &src, AllocatedBuffer &dst,
+    vk::DeviceSize bufferOffset);
 
 // Image -> Image (whole images, mip 0, layer 0)
 void transfer(
-    Device &device, const AllocatedImage &src, vk::ImageLayout srcCurrentLayout,
-    AllocatedImage &dst, vk::ImageLayout dstCurrentLayout,
+    Device &device, const AllocatedImage &src, AllocatedImage &dst,
     vk::ImageLayout dstFinalLayout = vk::ImageLayout::eShaderReadOnlyOptimal);
 
 // ---------- Swapchain helpers (record into existing command buffer) ----------
@@ -86,13 +84,13 @@ void transfer(
 
 // Image -> Buffer  (different devices)
 void transfer(Device &srcDevice, const AllocatedImage &src,
-              vk::ImageLayout srcCurrentLayout, Device &dstDevice,
+              Device &dstDevice,
               AllocatedBuffer &dst, vk::DeviceSize dstOffset);
 
 // Image -> Image  (different devices)
 void transfer(
-    Device &srcDevice, const AllocatedImage &src,
-    vk::ImageLayout srcCurrentLayout, Device &dstDevice, AllocatedImage &dst,
+    Device &srcDevice, const AllocatedImage &src, Device &dstDevice,
+    AllocatedImage &dst,
     vk::ImageLayout dstFinalLayout = vk::ImageLayout::eShaderReadOnlyOptimal);
 
 // (Swapchain inter‑device not provided – swapchain is tightly bound to its

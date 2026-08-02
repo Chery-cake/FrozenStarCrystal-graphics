@@ -8,6 +8,7 @@ import std.compat;
 import vulkan;
 import vk_mem_alloc;
 import graphics.vulkan.instances;
+import concurrency.pool;
 
 namespace graphics::vulkan::devices {
 
@@ -33,25 +34,28 @@ std::optional<uint32_t> findPresentQueue(vk::raii::SurfaceKHR *surface,
 
 } // namespace
 
-static std::unordered_map<std::thread::id, Device *> &getTouchedDevices() {
-  static std::unordered_map<std::thread::id, Device *> devices;
-  return devices;
-}
+struct TouchedDevice {
+  Device *device;
+  std::weak_ptr<uint8_t> alive;
+};
+thread_local std::vector<TouchedDevice> tl_touchedDevices;
 
-struct GlobalThreadCleanup {
-  ~GlobalThreadCleanup() {
-    std::ranges::for_each(getTouchedDevices(),
-                          [](std::pair<std::thread::id, Device *> pair) {
-                            pair.second->removeThreadPools(pair.first);
-                          });
+struct ThreadPoolCleanup {
+  ~ThreadPoolCleanup() {
+    for (const auto &entry : tl_touchedDevices) {
+      if (entry.device != nullptr && !entry.alive.expired()) {
+        entry.device->removeThreadPools(std::this_thread::get_id());
+      }
+    }
   }
 };
-thread_local GlobalThreadCleanup cleanupGuard;
+thread_local ThreadPoolCleanup tl_cleanup;
 
 Device::Device(const vk::raii::Instance &instance,
                vk::PhysicalDevice physicalDevice, const GPUInfo &info) {
 
   info_ = info;
+  aliveToken_ = std::make_shared<uint8_t>(0);
 
   physicalDevice_ =
       std::make_shared<vk::raii::PhysicalDevice>(instance, physicalDevice);
@@ -82,16 +86,19 @@ Device::Device(const vk::raii::Instance &instance,
     queueCreateInfos.push_back(queueCreateInfo);
   }
 
-  // Get device features
-  // TODO see to add optional features
-  // TODO move this setup to a separete function for easier management
+  auto availableFeatures = physicalDevice_->getFeatures2<
+      vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan12Features,
+      vk::PhysicalDeviceVulkan13Features>();
+
   vk::PhysicalDeviceFeatures deviceFeatures{};
-  deviceFeatures.setSamplerAnisotropy(vk::True);
-  deviceFeatures.setFillModeNonSolid(vk::True);
-  deviceFeatures.setWideLines(vk::True);
-  deviceFeatures.setGeometryShader(vk::True);
-  deviceFeatures.setTessellationShader(vk::True);
-  deviceFeatures.setShaderInt16(vk::True);
+  deviceFeatures.setSamplerAnisotropy(
+      availableFeatures.features.samplerAnisotropy);
+  deviceFeatures.setFillModeNonSolid(availableFeatures.features.fillModeNonSolid);
+  deviceFeatures.setWideLines(availableFeatures.features.wideLines);
+  deviceFeatures.setGeometryShader(availableFeatures.features.geometryShader);
+  deviceFeatures.setTessellationShader(
+      availableFeatures.features.tessellationShader);
+  deviceFeatures.setShaderInt16(availableFeatures.features.shaderInt16);
   // deviceFeatures.setShaderInt64(vk::True);
   // deviceFeatures.setShaderFloat64(vk::True);
 
@@ -101,45 +108,103 @@ Device::Device(const vk::raii::Instance &instance,
 
   vk::PhysicalDeviceVulkan12Features deviceFeatures12{};
   deviceFeatures12.setPNext(&deviceFeatures11);
-
-  deviceFeatures12.setDescriptorBindingPartiallyBound(vk::True);
-  deviceFeatures12.setDescriptorBindingVariableDescriptorCount(vk::True);
-  deviceFeatures12.setDescriptorBindingSampledImageUpdateAfterBind(vk::True);
-  deviceFeatures12.setDescriptorBindingStorageBufferUpdateAfterBind(vk::True);
-  deviceFeatures12.setDescriptorBindingUniformBufferUpdateAfterBind(vk::True);
-  deviceFeatures12.setDescriptorBindingStorageImageUpdateAfterBind(vk::True);
-  deviceFeatures12.setDescriptorBindingUpdateUnusedWhilePending(vk::True);
+  deviceFeatures12.setDescriptorBindingPartiallyBound(
+      availableFeatures.get<vk::PhysicalDeviceVulkan12Features>()
+          .descriptorBindingPartiallyBound);
+  deviceFeatures12.setDescriptorBindingVariableDescriptorCount(
+      availableFeatures.get<vk::PhysicalDeviceVulkan12Features>()
+          .descriptorBindingVariableDescriptorCount);
+  deviceFeatures12.setDescriptorBindingSampledImageUpdateAfterBind(
+      availableFeatures.get<vk::PhysicalDeviceVulkan12Features>()
+          .descriptorBindingSampledImageUpdateAfterBind);
+  deviceFeatures12.setDescriptorBindingStorageBufferUpdateAfterBind(
+      availableFeatures.get<vk::PhysicalDeviceVulkan12Features>()
+          .descriptorBindingStorageBufferUpdateAfterBind);
+  deviceFeatures12.setDescriptorBindingUniformBufferUpdateAfterBind(
+      availableFeatures.get<vk::PhysicalDeviceVulkan12Features>()
+          .descriptorBindingUniformBufferUpdateAfterBind);
+  deviceFeatures12.setDescriptorBindingStorageImageUpdateAfterBind(
+      availableFeatures.get<vk::PhysicalDeviceVulkan12Features>()
+          .descriptorBindingStorageImageUpdateAfterBind);
+  deviceFeatures12.setDescriptorBindingUpdateUnusedWhilePending(
+      availableFeatures.get<vk::PhysicalDeviceVulkan12Features>()
+          .descriptorBindingUpdateUnusedWhilePending);
   deviceFeatures12.setDescriptorBindingStorageTexelBufferUpdateAfterBind(
-      vk::True);
+      availableFeatures.get<vk::PhysicalDeviceVulkan12Features>()
+          .descriptorBindingStorageTexelBufferUpdateAfterBind);
   deviceFeatures12.setDescriptorBindingUniformTexelBufferUpdateAfterBind(
-      vk::True);
+      availableFeatures.get<vk::PhysicalDeviceVulkan12Features>()
+          .descriptorBindingUniformTexelBufferUpdateAfterBind);
 
-  deviceFeatures12.setDescriptorIndexing(vk::True);
-  deviceFeatures12.setShaderSampledImageArrayNonUniformIndexing(vk::True);
-  deviceFeatures12.setShaderStorageBufferArrayNonUniformIndexing(vk::True);
-  deviceFeatures12.setRuntimeDescriptorArray(vk::True);
-  deviceFeatures12.setTimelineSemaphore(vk::True);
-  deviceFeatures12.setBufferDeviceAddress(vk::True);
-  deviceFeatures12.setScalarBlockLayout(vk::True);
-  deviceFeatures12.setUniformBufferStandardLayout(vk::True);
-  deviceFeatures12.setVulkanMemoryModelDeviceScope(vk::True);
-  deviceFeatures12.setVulkanMemoryModel(vk::True);
-  deviceFeatures12.setShaderFloat16(vk::True);
-  deviceFeatures12.setShaderInt8(vk::True);
+  deviceFeatures12.setDescriptorIndexing(
+      availableFeatures.get<vk::PhysicalDeviceVulkan12Features>()
+          .descriptorIndexing);
+  deviceFeatures12.setShaderSampledImageArrayNonUniformIndexing(
+      availableFeatures.get<vk::PhysicalDeviceVulkan12Features>()
+          .shaderSampledImageArrayNonUniformIndexing);
+  deviceFeatures12.setShaderStorageBufferArrayNonUniformIndexing(
+      availableFeatures.get<vk::PhysicalDeviceVulkan12Features>()
+          .shaderStorageBufferArrayNonUniformIndexing);
+  deviceFeatures12.setRuntimeDescriptorArray(
+      availableFeatures.get<vk::PhysicalDeviceVulkan12Features>()
+          .runtimeDescriptorArray);
+  deviceFeatures12.setTimelineSemaphore(
+      availableFeatures.get<vk::PhysicalDeviceVulkan12Features>()
+          .timelineSemaphore);
+  deviceFeatures12.setBufferDeviceAddress(
+      availableFeatures.get<vk::PhysicalDeviceVulkan12Features>()
+          .bufferDeviceAddress);
+  deviceFeatures12.setScalarBlockLayout(
+      availableFeatures.get<vk::PhysicalDeviceVulkan12Features>()
+          .scalarBlockLayout);
+  deviceFeatures12.setUniformBufferStandardLayout(
+      availableFeatures.get<vk::PhysicalDeviceVulkan12Features>()
+          .uniformBufferStandardLayout);
+  deviceFeatures12.setVulkanMemoryModelDeviceScope(
+      availableFeatures.get<vk::PhysicalDeviceVulkan12Features>()
+          .vulkanMemoryModelDeviceScope);
+  deviceFeatures12.setVulkanMemoryModel(
+      availableFeatures.get<vk::PhysicalDeviceVulkan12Features>()
+          .vulkanMemoryModel);
+  deviceFeatures12.setShaderFloat16(
+      availableFeatures.get<vk::PhysicalDeviceVulkan12Features>().shaderFloat16);
+  deviceFeatures12.setShaderInt8(
+      availableFeatures.get<vk::PhysicalDeviceVulkan12Features>().shaderInt8);
 
   vk::PhysicalDeviceVulkan13Features deviceFeatures13{};
   deviceFeatures13.setPNext(&deviceFeatures12);
-  deviceFeatures13.setDynamicRendering(vk::True);
-  deviceFeatures13.setSynchronization2(vk::True);
-  deviceFeatures13.setMaintenance4(vk::True);
-  deviceFeatures13.setInlineUniformBlock(vk::True);
-  deviceFeatures13.setSubgroupSizeControl(vk::True);
-  deviceFeatures13.setComputeFullSubgroups(vk::True);
-  deviceFeatures13.setShaderDemoteToHelperInvocation(vk::True);
-  deviceFeatures13.setShaderIntegerDotProduct(vk::True);
-  deviceFeatures13.setShaderZeroInitializeWorkgroupMemory(vk::True);
-  deviceFeatures13.setShaderTerminateInvocation(vk::True);
-  deviceFeatures13.setRobustImageAccess(vk::True);
+  deviceFeatures13.setDynamicRendering(
+      availableFeatures.get<vk::PhysicalDeviceVulkan13Features>()
+          .dynamicRendering);
+  deviceFeatures13.setSynchronization2(
+      availableFeatures.get<vk::PhysicalDeviceVulkan13Features>()
+          .synchronization2);
+  deviceFeatures13.setMaintenance4(
+      availableFeatures.get<vk::PhysicalDeviceVulkan13Features>().maintenance4);
+  deviceFeatures13.setInlineUniformBlock(
+      availableFeatures.get<vk::PhysicalDeviceVulkan13Features>()
+          .inlineUniformBlock);
+  deviceFeatures13.setSubgroupSizeControl(
+      availableFeatures.get<vk::PhysicalDeviceVulkan13Features>()
+          .subgroupSizeControl);
+  deviceFeatures13.setComputeFullSubgroups(
+      availableFeatures.get<vk::PhysicalDeviceVulkan13Features>()
+          .computeFullSubgroups);
+  deviceFeatures13.setShaderDemoteToHelperInvocation(
+      availableFeatures.get<vk::PhysicalDeviceVulkan13Features>()
+          .shaderDemoteToHelperInvocation);
+  deviceFeatures13.setShaderIntegerDotProduct(
+      availableFeatures.get<vk::PhysicalDeviceVulkan13Features>()
+          .shaderIntegerDotProduct);
+  deviceFeatures13.setShaderZeroInitializeWorkgroupMemory(
+      availableFeatures.get<vk::PhysicalDeviceVulkan13Features>()
+          .shaderZeroInitializeWorkgroupMemory);
+  deviceFeatures13.setShaderTerminateInvocation(
+      availableFeatures.get<vk::PhysicalDeviceVulkan13Features>()
+          .shaderTerminateInvocation);
+  deviceFeatures13.setRobustImageAccess(
+      availableFeatures.get<vk::PhysicalDeviceVulkan13Features>()
+          .robustImageAccess);
 
   vk::PhysicalDeviceVulkan14Features deviceFeatures14{};
   deviceFeatures14.setPNext(&deviceFeatures13);
@@ -189,6 +254,20 @@ Device::Device(const vk::raii::Instance &instance,
         device_->getQueue(info.queueFamilies.protectedQueue.value(), 0);
   }
 
+  concurrency::pool::Pool poolDesc{
+      .name = info.name + "_gpu_pool",
+      .queueKind = concurrency::pool::queues::QueueKind::FIFO,
+  };
+  size_t workers = 1;
+  if (info.type == vk::PhysicalDeviceType::eDiscreteGpu) {
+    bool dedicatedCompute = info.queueFamilies.computeQueue.has_value() &&
+                            info.queueFamilies.computeQueue !=
+                                info.queueFamilies.graphicsQueue;
+    workers = dedicatedCompute ? 2 : 1;
+  }
+  gpuPool_ =
+      std::make_unique<concurrency::pool::ThreadPool>(poolDesc, workers);
+
   vma::AllocatorCreateInfo allocatorInfo{};
   allocatorInfo.vulkanApiVersion = instances::Config::minApiVersion;
   allocatorInfo.instance = nullptr; // must be null
@@ -209,16 +288,14 @@ Device::~Device() {
 
   windows_.clear();
 
-  std::erase_if(getTouchedDevices(),
-                [this](std::pair<std::thread::id, Device *> pair) {
-                  return pair.second == this;
-                });
-
   graphicsPools_.clear();
   computePools_.clear();
   transferPools_.clear();
   sparseBidingPools_.clear();
   protectedPools_.clear();
+  touchedThreads_.clear();
+  gpuPool_.reset();
+  aliveToken_.reset();
 
   allocator_.reset();
   device_.reset();
@@ -235,9 +312,9 @@ std::vector<std::string> Device::getAvailableExtensions() {
                           available_set.emplace(ext.extensionName);
                         });
 
-  const auto &required = instances::Config::instance().getDeviceExtensions();
-  const auto &optional =
-      instances::Config::instance().getOptionalDeviceExtensions();
+  auto snapshot = instances::Config::instance().snapshot();
+  const auto &required = snapshot.deviceExtensions;
+  const auto &optional = snapshot.optionalDeviceExtensions;
 
   std::vector<std::string> suported;
   std::vector<std::string> unsuported;
@@ -364,9 +441,30 @@ AllocatedBuffer Device::createBuffer(const BufferCreateInfo &info) {
   vk::BufferCreateInfo bufferInfo{
       {}, info.size, info.usage, vk::SharingMode::eExclusive};
 
+  vma::MemoryUsage resolvedMemUsage = info.memoryUsage;
+  vma::AllocationCreateFlags resolvedFlags = info.flags;
+
+  if (!info.flags && info.memoryUsage == vma::MemoryUsage::eAuto) {
+    switch (info.access) {
+    case BufferCreateInfo::Access::eStagingUpload:
+      resolvedFlags = vma::AllocationCreateFlagBits::eHostAccessSequentialWrite;
+      break;
+    case BufferCreateInfo::Access::eStagingReadback:
+      resolvedFlags = vma::AllocationCreateFlagBits::eHostAccessRandom;
+      break;
+    case BufferCreateInfo::Access::ePersistentMapping:
+      resolvedFlags = vma::AllocationCreateFlagBits::eHostAccessSequentialWrite |
+                      vma::AllocationCreateFlagBits::eMapped;
+      break;
+    case BufferCreateInfo::Access::eGpuOnly:
+    default:
+      break;
+    }
+  }
+
   vma::AllocationCreateInfo allocInfo{};
-  allocInfo.usage = info.memoryUsage;
-  allocInfo.flags = info.flags;
+  allocInfo.usage = resolvedMemUsage;
+  allocInfo.flags = resolvedFlags;
 
   result.buffer =
       std::make_unique<vma::raii::Buffer>(*allocator_, bufferInfo, allocInfo);
@@ -382,6 +480,7 @@ AllocatedImage Device::createImage(const ImageCreateInfo &info) {
   result.extent = info.extent;
   result.mipLevels = info.mipLevels;
   result.arrayLayers = info.arrayLayers;
+  result.currentLayout = info.layout;
   result.name = info.debugName;
 
   vk::ImageCreateInfo imageInfo{{},
@@ -402,11 +501,21 @@ AllocatedImage Device::createImage(const ImageCreateInfo &info) {
   result.image =
       std::make_unique<vma::raii::Image>(*allocator_, imageInfo, allocInfo);
 
+  if (info.createImageView) {
+    vk::ImageViewCreateInfo viewInfo{};
+    viewInfo.image = result.getImage();
+    viewInfo.viewType = info.viewType;
+    viewInfo.format = info.format;
+    viewInfo.components = info.components;
+    viewInfo.subresourceRange = info.subresourceRange;
+    result.view = std::make_unique<vk::raii::ImageView>(*device_, viewInfo);
+  }
+
   return result;
 }
 
 CommandBufferPool &Device::getGraphicsPool() {
-  ensureThreadCleanup();
+  markThreadTouched();
   std::thread::id tid = std::this_thread::get_id();
   {
     std::shared_lock lock(poolsMtx_);
@@ -418,14 +527,15 @@ CommandBufferPool &Device::getGraphicsPool() {
 
   std::unique_lock lock(poolsMtx_);
 
-  auto pool = std::make_unique<CommandBufferPool>(
-      device_, info_.queueFamilies.graphicsQueue.value());
+  const CommandPoolCreateInfo createInfo{
+      .queueFamily = info_.queueFamilies.graphicsQueue.value()};
+  auto pool = std::make_unique<CommandBufferPool>(device_, createInfo);
   auto &&[it, inserted] = graphicsPools_.emplace(tid, std::move(pool));
   return *it->second;
 }
 
 CommandBufferPool &Device::getComputePool() {
-  ensureThreadCleanup();
+  markThreadTouched();
   std::thread::id tid = std::this_thread::get_id();
   {
     std::shared_lock lock(poolsMtx_);
@@ -437,14 +547,15 @@ CommandBufferPool &Device::getComputePool() {
 
   std::unique_lock lock(poolsMtx_);
 
-  auto pool = std::make_unique<CommandBufferPool>(
-      device_, info_.queueFamilies.computeQueue.value());
+  const CommandPoolCreateInfo createInfo{
+      .queueFamily = info_.queueFamilies.computeQueue.value()};
+  auto pool = std::make_unique<CommandBufferPool>(device_, createInfo);
   auto &&[it, inserted] = computePools_.emplace(tid, std::move(pool));
   return *it->second;
 }
 
 CommandBufferPool &Device::getTransferPool() {
-  ensureThreadCleanup();
+  markThreadTouched();
   std::thread::id tid = std::this_thread::get_id();
   {
     std::shared_lock lock(poolsMtx_);
@@ -456,14 +567,15 @@ CommandBufferPool &Device::getTransferPool() {
 
   std::unique_lock lock(poolsMtx_);
 
-  auto pool = std::make_unique<CommandBufferPool>(
-      device_, info_.queueFamilies.transferQueue.value());
+  const CommandPoolCreateInfo createInfo{
+      .queueFamily = info_.queueFamilies.transferQueue.value()};
+  auto pool = std::make_unique<CommandBufferPool>(device_, createInfo);
   auto &&[it, inserted] = transferPools_.emplace(tid, std::move(pool));
   return *it->second;
 }
 
 CommandBufferPool &Device::getSparseBidingPool() {
-  ensureThreadCleanup();
+  markThreadTouched();
   std::thread::id tid = std::this_thread::get_id();
   {
     std::shared_lock lock(poolsMtx_);
@@ -475,14 +587,15 @@ CommandBufferPool &Device::getSparseBidingPool() {
 
   std::unique_lock lock(poolsMtx_);
 
-  auto pool = std::make_unique<CommandBufferPool>(
-      device_, info_.queueFamilies.sparseBindingQueue.value());
+  const CommandPoolCreateInfo createInfo{
+      .queueFamily = info_.queueFamilies.sparseBindingQueue.value()};
+  auto pool = std::make_unique<CommandBufferPool>(device_, createInfo);
   auto &&[it, inserted] = sparseBidingPools_.emplace(tid, std::move(pool));
   return *it->second;
 }
 
 CommandBufferPool &Device::getProtectedPool() {
-  ensureThreadCleanup();
+  markThreadTouched();
   std::thread::id tid = std::this_thread::get_id();
   {
     std::shared_lock lock(poolsMtx_);
@@ -494,21 +607,19 @@ CommandBufferPool &Device::getProtectedPool() {
 
   std::unique_lock lock(poolsMtx_);
 
-  auto pool = std::make_unique<CommandBufferPool>(
-      device_, info_.queueFamilies.protectedQueue.value());
+  const CommandPoolCreateInfo createInfo{
+      .queueFamily = info_.queueFamilies.protectedQueue.value()};
+  auto pool = std::make_unique<CommandBufferPool>(device_, createInfo);
   auto &&[it, inserted] = protectedPools_.emplace(tid, std::move(pool));
   return *it->second;
 }
 
-void Device::ensureThreadCleanup() {
-  auto &devices = getTouchedDevices();
-  auto it = std::ranges::find_if(
-      devices, [this](std::pair<std::thread::id, Device *> pair) {
-        return pair.second == this;
-      });
-
-  if (it == std::ranges::end(devices)) {
-    devices.emplace(std::this_thread::get_id(), this);
+void Device::markThreadTouched() {
+  const auto tid = std::this_thread::get_id();
+  std::unique_lock lock(poolsMtx_);
+  auto [_, inserted] = touchedThreads_.insert(tid);
+  if (inserted) {
+    tl_touchedDevices.push_back(TouchedDevice{this, aliveToken_});
   }
 }
 
@@ -519,6 +630,9 @@ void Device::removeThreadPools(std::thread::id tid) {
   transferPools_.erase(tid);
   sparseBidingPools_.erase(tid);
   protectedPools_.erase(tid);
+  touchedThreads_.erase(tid);
 }
+
+size_t Device::workerCount() const noexcept { return gpuPool_->size(); }
 
 } // namespace graphics::vulkan::devices

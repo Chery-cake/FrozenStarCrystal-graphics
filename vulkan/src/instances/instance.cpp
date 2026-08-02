@@ -67,8 +67,9 @@ Instance::Instance() {
   vk::detail::defaultDispatchLoaderDynamic.init(instanceProc);
 
   context_ = std::make_unique<vk::raii::Context>();
+  const auto configSnapshot = Config::instance().snapshot();
 
-  const auto &layers = Config::instance().getInstanceLayers();
+  const auto &layers = configSnapshot.instanceLayers;
 
   auto unsupportedList = checkLayerSupport(layers);
   std::unordered_set<std::string> unsupported(unsupportedList.begin(),
@@ -82,7 +83,7 @@ Instance::Instance() {
     throw std::runtime_error("Necessary layers not supported\n");
   }
 
-  const auto &optionalLayers = Config::instance().getOptionalInstanceLayers();
+  const auto &optionalLayers = configSnapshot.optionalInstanceLayers;
 
   unsupportedList = checkLayerSupport(optionalLayers);
   unsupported.insert(unsupportedList.begin(), unsupportedList.end());
@@ -113,7 +114,7 @@ Instance::Instance() {
       std::back_inserter(enabledLayers));
 
   // Check extension support
-  const auto &exts = Config::instance().getInstanceExtensions();
+  const auto &exts = configSnapshot.instanceExtensions;
   auto unsupportedExtensionsList = checkExtensionSupport(exts);
   std::unordered_set<std::string> unsupportedExt(
       unsupportedExtensionsList.begin(), unsupportedExtensionsList.end());
@@ -125,7 +126,7 @@ Instance::Instance() {
     throw std::runtime_error("Necessary extensions not supported");
   }
 
-  const auto &optionalExts = Config::instance().getOptionalInstanceExtensions();
+  const auto &optionalExts = configSnapshot.optionalInstanceExtensions;
   unsupportedExtensionsList = checkExtensionSupport(optionalExts);
   unsupportedExt.insert(unsupportedExtensionsList.begin(),
                         unsupportedExtensionsList.end());
@@ -180,7 +181,6 @@ Instance::Instance() {
 #endif
 
   instance_ = std::make_unique<vk::raii::Instance>(*context_, createInfo);
-  vk::detail::defaultDispatchLoaderDynamic.init(**instance_, instanceProc);
 
 #ifdef ENGINE_DEBUG
   try {

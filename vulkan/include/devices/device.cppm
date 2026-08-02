@@ -7,20 +7,29 @@ export module graphics.vulkan.devices:device;
 import std.compat;
 import vulkan;
 import vk_mem_alloc;
+import concurrency.pool;
+import concurrency.pool.coroutine;
 
 import :structs;
 import :swapchain;
-
-namespace graphics::vulkan::devices {
-
-struct GlobalThreadCleanup;
-
-} // namespace graphics::vulkan::devices
 
 export namespace graphics::vulkan::devices {
 
 class FROZENSTARCRYSTAL_GRAPHICS_API Device {
 private:
+  friend struct ThreadPoolCleanup;
+  friend void transfer(Device &device, const AllocatedBuffer &src,
+                       vk::DeviceSize srcOffset, AllocatedBuffer &dst,
+                       vk::DeviceSize dstOffset, vk::DeviceSize size);
+  friend void transfer(Device &device, const AllocatedBuffer &src,
+                       vk::DeviceSize bufferOffset, AllocatedImage &dst,
+                       vk::ImageLayout dstFinalLayout);
+  friend void transfer(Device &device, const AllocatedImage &src,
+                       AllocatedBuffer &dst, vk::DeviceSize bufferOffset);
+  friend void transfer(Device &device, const AllocatedImage &src,
+                       AllocatedImage &dst,
+                       vk::ImageLayout dstFinalLayout);
+
   std::shared_ptr<vk::raii::PhysicalDevice> physicalDevice_;
   std::shared_ptr<vk::raii::Device> device_;
   GPUInfo info_;
@@ -51,13 +60,18 @@ private:
       sparseBidingPools_; // thread_local
   std::unordered_map<std::thread::id, std::unique_ptr<CommandBufferPool>>
       protectedPools_; // thread_local
+  std::unordered_set<std::thread::id> touchedThreads_;
   std::shared_mutex poolsMtx_;
+  std::unique_ptr<concurrency::pool::ThreadPool> gpuPool_;
+  std::shared_ptr<uint8_t> aliveToken_;
 
   std::vector<std::string> getAvailableExtensions();
 
-  void ensureThreadCleanup();
+  void markThreadTouched();
   void removeThreadPools(std::thread::id tid);
-  friend GlobalThreadCleanup;
+
+  template <std::invocable<vk::CommandBuffer> F>
+  void submitOneShot(vk::Queue queue, uint32_t queueFamily, F &&recordFn);
 
 public:
   Device(const vk::raii::Instance &instance, vk::PhysicalDevice physicalDevice,
@@ -87,6 +101,16 @@ public:
   [[nodiscard]] CommandBufferPool &getTransferPool();
   [[nodiscard]] CommandBufferPool &getSparseBidingPool();
   [[nodiscard]] CommandBufferPool &getProtectedPool();
+
+  template <concurrency::pool::coroutine::policy::Queue QP =
+                concurrency::pool::coroutine::policy::Queue::Inline>
+  [[nodiscard]] concurrency::pool::coroutine::Scheduler<QP> schedule() noexcept;
+
+  template <typename F, typename... Args>
+  [[nodiscard]] auto submit(F &&f, Args &&...args)
+      -> std::future<std::invoke_result_t<F, Args...>>;
+
+  [[nodiscard]] size_t workerCount() const noexcept;
 
   [[nodiscard]] const GPUInfo &getInfo() const { return info_; }
   [[nodiscard]] std::vector<std::shared_ptr<WindowInfo>> getWindows() const {
@@ -135,5 +159,37 @@ public:
 
   void waitIdle() const { device_->waitIdle(); };
 };
+
+template <std::invocable<vk::CommandBuffer> F>
+void Device::submitOneShot(vk::Queue queue, uint32_t queueFamily, F &&recordFn) {
+  const CommandPoolCreateInfo createInfo{.queueFamily = queueFamily};
+  CommandBufferPool pool{device_, createInfo};
+  pool.allocate(1);
+  auto &cmd = pool.buffers.front();
+  cmd.begin(vk::CommandBufferBeginInfo{
+      vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+  std::forward<F>(recordFn)(*cmd);
+  cmd.end();
+
+  vk::SubmitInfo submit;
+  submit.setCommandBuffers(*cmd);
+  vk::raii::Fence fence{*device_, vk::FenceCreateInfo{}};
+  queue.submit(submit, *fence);
+  auto result = device_->waitForFences(*fence, vk::True, UINT64_MAX);
+  if (result != vk::Result::eSuccess) {
+    throw std::runtime_error("Transfer submission failed");
+  }
+}
+
+template <concurrency::pool::coroutine::policy::Queue QP>
+concurrency::pool::coroutine::Scheduler<QP> Device::schedule() noexcept {
+  return gpuPool_->schedule<QP>();
+}
+
+template <typename F, typename... Args>
+auto Device::submit(F &&f, Args &&...args)
+    -> std::future<std::invoke_result_t<F, Args...>> {
+  return gpuPool_->submit(std::forward<F>(f), std::forward<Args>(args)...);
+}
 
 } // namespace graphics::vulkan::devices
