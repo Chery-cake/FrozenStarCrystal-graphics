@@ -115,6 +115,9 @@ vk::DeviceSize imageDataSize(vk::Format format, vk::Extent3D extent);
 
 // Each async overload mirrors the sync version but returns std::future<void>.
 // The returned future completes when the GPU transfer is finished.
+// NOTE: The reference-based overloads below require the caller to guarantee
+// that all referenced resources outlive the returned future.
+// Use the shared_ptr overloads below for fire-and-forget or registry use.
 
 std::future<void> transferAsync(Device &device, const AllocatedBuffer &src,
                                 vk::DeviceSize srcOffset, AllocatedBuffer &dst,
@@ -152,6 +155,63 @@ std::future<void> transferAsync(Device &srcDevice, const AllocatedImage &src,
 
 std::future<void> transferAsync(Device &srcDevice, const AllocatedImage &src,
                                 Device &dstDevice, AllocatedImage &dst,
+                                vk::ImageLayout dstFinalLayout =
+                                    vk::ImageLayout::eShaderReadOnlyOptimal);
+
+// ---------- ownership-safe async overloads ----------
+// Resources are kept alive by shared_ptr for the duration of the async work.
+
+std::future<void> transferAsync(Device &device,
+                                std::shared_ptr<AllocatedBuffer> src,
+                                vk::DeviceSize srcOffset,
+                                std::shared_ptr<AllocatedBuffer> dst,
+                                vk::DeviceSize dstOffset,
+                                vk::DeviceSize size);
+
+std::future<void> transferAsync(Device &device,
+                                std::shared_ptr<AllocatedBuffer> src,
+                                vk::DeviceSize bufferOffset,
+                                std::shared_ptr<AllocatedImage> dst,
+                                vk::ImageLayout dstFinalLayout =
+                                    vk::ImageLayout::eShaderReadOnlyOptimal);
+
+std::future<void> transferAsync(Device &device,
+                                std::shared_ptr<AllocatedImage> src,
+                                std::shared_ptr<AllocatedBuffer> dst,
+                                vk::DeviceSize bufferOffset);
+
+std::future<void> transferAsync(Device &device,
+                                std::shared_ptr<AllocatedImage> src,
+                                std::shared_ptr<AllocatedImage> dst,
+                                vk::ImageLayout dstFinalLayout =
+                                    vk::ImageLayout::eShaderReadOnlyOptimal);
+
+std::future<void> transferAsync(std::shared_ptr<Device> srcDevice,
+                                std::shared_ptr<AllocatedBuffer> src,
+                                vk::DeviceSize srcOffset,
+                                std::shared_ptr<Device> dstDevice,
+                                std::shared_ptr<AllocatedBuffer> dst,
+                                vk::DeviceSize dstOffset,
+                                vk::DeviceSize size);
+
+std::future<void> transferAsync(std::shared_ptr<Device> srcDevice,
+                                std::shared_ptr<AllocatedBuffer> src,
+                                vk::DeviceSize srcOffset,
+                                std::shared_ptr<Device> dstDevice,
+                                std::shared_ptr<AllocatedImage> dst,
+                                vk::ImageLayout dstFinalLayout =
+                                    vk::ImageLayout::eShaderReadOnlyOptimal);
+
+std::future<void> transferAsync(std::shared_ptr<Device> srcDevice,
+                                std::shared_ptr<AllocatedImage> src,
+                                std::shared_ptr<Device> dstDevice,
+                                std::shared_ptr<AllocatedBuffer> dst,
+                                vk::DeviceSize dstOffset);
+
+std::future<void> transferAsync(std::shared_ptr<Device> srcDevice,
+                                std::shared_ptr<AllocatedImage> src,
+                                std::shared_ptr<Device> dstDevice,
+                                std::shared_ptr<AllocatedImage> dst,
                                 vk::ImageLayout dstFinalLayout =
                                     vk::ImageLayout::eShaderReadOnlyOptimal);
 

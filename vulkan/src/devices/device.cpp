@@ -259,11 +259,28 @@ Device::Device(const vk::raii::Instance &instance,
       .queueKind = concurrency::pool::queues::QueueKind::FIFO,
   };
   size_t workers = 1;
-  if (info.type == vk::PhysicalDeviceType::eDiscreteGpu) {
+  switch (info.type) {
+  case vk::PhysicalDeviceType::eDiscreteGpu: {
     bool dedicatedCompute = info.queueFamilies.computeQueue.has_value() &&
                             info.queueFamilies.computeQueue !=
                                 info.queueFamilies.graphicsQueue;
     workers = dedicatedCompute ? 2 : 1;
+    break;
+  }
+  case vk::PhysicalDeviceType::eIntegratedGpu:
+    workers = 1;
+    break;
+  case vk::PhysicalDeviceType::eVirtualGpu:
+    workers = 1;
+    break;
+  case vk::PhysicalDeviceType::eCpu:
+    workers = std::max(size_t{2},
+                       static_cast<size_t>(std::thread::hardware_concurrency()) /
+                           2);
+    break;
+  default:
+    workers = 1;
+    break;
   }
   gpuPool_ =
       std::make_unique<concurrency::pool::ThreadPool>(poolDesc, workers);

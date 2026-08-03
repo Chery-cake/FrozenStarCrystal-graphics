@@ -201,6 +201,23 @@ template <> struct hash<graphics::vulkan::pipelines::DynamicPipelineInfo> {
                         blend.colorWriteMask))));
     }
 
+    for (const auto &b : k.vertexBindings) {
+      mix(seed, std::hash<uint32_t>{}(b.binding));
+      mix(seed, std::hash<uint32_t>{}(b.stride));
+      mix(seed, std::hash<uint32_t>{}(static_cast<uint32_t>(b.inputRate)));
+    }
+
+    for (const auto &a : k.vertexAttributes) {
+      mix(seed, std::hash<uint32_t>{}(a.location));
+      mix(seed, std::hash<uint32_t>{}(a.binding));
+      mix(seed, std::hash<uint32_t>{}(static_cast<uint32_t>(a.format)));
+      mix(seed, std::hash<uint32_t>{}(a.offset));
+    }
+
+    for (const auto &ds : k.extraDynamicStates) {
+      mix(seed, std::hash<uint32_t>{}(static_cast<uint32_t>(ds)));
+    }
+
     return seed;
   }
 };
@@ -217,6 +234,8 @@ template <> struct hash<graphics::vulkan::pipelines::StaticPipelineInfo> {
     dynamicEquivalent.depthStencil = k.depthStencil;
     dynamicEquivalent.multisample = k.multisample;
     dynamicEquivalent.attachments = k.attachments;
+    dynamicEquivalent.vertexBindings = k.vertexBindings;
+    dynamicEquivalent.vertexAttributes = k.vertexAttributes;
     dynamicEquivalent.colorBlendAttachments = k.colorBlendAttachments;
 
     size_t seed =

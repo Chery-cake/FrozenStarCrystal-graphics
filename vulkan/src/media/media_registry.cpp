@@ -44,10 +44,43 @@ MediaRegistry::load(const MediaTag              *tag,
 }
 
 std::future<std::shared_ptr<MediaResource>>
-MediaRegistry::loadCrossDevice(const MediaTag    *tag,
-                               devices::Device   &computeDevice,
-                               devices::Device   &displayDevice,
-                               ImageArrayRegistry &bindless) {
+MediaRegistry::load(const MediaTag                               *tag,
+                    std::vector<std::shared_ptr<devices::Device>> targetDevices,
+                    ImageArrayRegistry                           &bindless) {
+    if (tag == nullptr || targetDevices.empty()) {
+        std::promise<std::shared_ptr<MediaResource>> p;
+        p.set_value(nullptr);
+        return p.get_future();
+    }
+
+    if (auto existing = get(tag)) {
+        std::promise<std::shared_ptr<MediaResource>> p;
+        p.set_value(existing);
+        return p.get_future();
+    }
+
+    return targetDevices[0]->submit(
+        [this, tag, targetDevices = std::move(targetDevices),
+         &bindless]() -> std::shared_ptr<MediaResource> {
+            auto resource = std::make_shared<MediaResource>();
+            resource->kind = tag->kind;
+
+            // TODO: Load pixel data from tag->sourcePath using a file-loader
+            // (e.g. stb_image for eImage2D/eImageAtlas, OpenEXR for eImageHDR,
+            // a video decoder for eVideoFrame/eVideoStream).
+            // For each device, create an AllocatedImage, upload via
+            // devices::transfer(), and register in bindless.
+
+            add(tag, resource);
+            return resource;
+        });
+}
+
+std::future<std::shared_ptr<MediaResource>>
+MediaRegistry::loadCrossDevice(const MediaTag                        *tag,
+                               std::shared_ptr<devices::Device>       computeDevice,
+                               std::shared_ptr<devices::Device>       displayDevice,
+                               ImageArrayRegistry                    &bindless) {
     if (tag == nullptr) {
         std::promise<std::shared_ptr<MediaResource>> p;
         p.set_value(nullptr);
@@ -60,8 +93,9 @@ MediaRegistry::loadCrossDevice(const MediaTag    *tag,
         return p.get_future();
     }
 
-    return computeDevice.submit(
-        [this, tag, &computeDevice, &displayDevice,
+    return computeDevice->submit(
+        [this, tag, computeDevice = std::move(computeDevice),
+         displayDevice = std::move(displayDevice),
          &bindless]() -> std::shared_ptr<MediaResource> {
             auto resource = std::make_shared<MediaResource>();
             resource->kind = tag->kind;

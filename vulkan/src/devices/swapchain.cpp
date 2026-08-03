@@ -326,7 +326,10 @@ std::expected<uint32_t, Swapchain::PresentError> Swapchain::acquireNextImage() {
     return std::unexpected<PresentError>({.code = PresentError::Code::outOfDate,
                                         .message = "Swapchain out of date"});
   default:
-    throw std::runtime_error("vkAcquireNextImageKHR failed");
+    return std::unexpected<PresentError>(
+        {.code = PresentError::Code::unknown,
+         .message = std::format("vkAcquireNextImageKHR returned: {}",
+                                vk::to_string(result))});
   }
 
   frameAcquired_ = true;

@@ -62,13 +62,20 @@ public:
          std::span<devices::Device *> targetDevices,
          ImageArrayRegistry          &bindless);
 
+    // Ownership-safe version — keeps devices alive for the duration of the
+    // upload.
+    std::future<std::shared_ptr<MediaResource>>
+    load(const MediaTag                               *tag,
+         std::vector<std::shared_ptr<devices::Device>> targetDevices,
+         ImageArrayRegistry                           &bindless);
+
     // Load on computeDevice and automatically mirror to displayDevice using the
     // cross-device transfer pipeline.
     std::future<std::shared_ptr<MediaResource>>
-    loadCrossDevice(const MediaTag    *tag,
-                    devices::Device   &computeDevice,
-                    devices::Device   &displayDevice,
-                    ImageArrayRegistry &bindless);
+    loadCrossDevice(const MediaTag                        *tag,
+                    std::shared_ptr<devices::Device>       computeDevice,
+                    std::shared_ptr<devices::Device>       displayDevice,
+                    ImageArrayRegistry                    &bindless);
 
     // For video streams: upload the next decoded frame and advance
     // currentFrame by one (wrapping at totalFrames).
