@@ -29,7 +29,7 @@ Manager::~Manager() {
 
   shaderManager_.reset();
 
-  std::cout << "[Manager] Clear";
+  std::cout << "[Manager] Cleared\n";
 }
 
 std::expected<std::shared_ptr<vk::raii::Pipeline>, PipelineError>

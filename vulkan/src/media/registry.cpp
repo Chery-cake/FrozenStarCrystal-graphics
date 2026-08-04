@@ -10,7 +10,8 @@ import graphics.vulkan.devices;
 namespace graphics::vulkan::media {
 
 std::future<std::shared_ptr<Resource>>
-Registry::load(const Tag *tag, std::span<devices::Device *> targetDevices,
+Registry::load(const Tag *tag,
+               std::vector<std::shared_ptr<devices::Device>> targetDevices,
                ImageArrayRegistry &bindless) {
   if (tag == nullptr || targetDevices.empty()) {
     std::promise<std::shared_ptr<Resource>> p;
@@ -44,8 +45,9 @@ Registry::load(const Tag *tag, std::span<devices::Device *> targetDevices,
 }
 
 std::future<std::shared_ptr<Resource>>
-Registry::loadCrossDevice(const Tag *tag, devices::Device &computeDevice,
-                          devices::Device &displayDevice,
+Registry::loadCrossDevice(const Tag *tag,
+                          std::shared_ptr<devices::Device> computeDevice,
+                          std::shared_ptr<devices::Device> displayDevice,
                           ImageArrayRegistry &bindless) {
   if (tag == nullptr) {
     std::promise<std::shared_ptr<Resource>> p;
@@ -59,8 +61,8 @@ Registry::loadCrossDevice(const Tag *tag, devices::Device &computeDevice,
     return p.get_future();
   }
 
-  return computeDevice.submit([this, tag, &computeDevice, &displayDevice,
-                               &bindless]() -> std::shared_ptr<Resource> {
+  return computeDevice->submit([this, tag, &computeDevice, &displayDevice,
+                                &bindless]() -> std::shared_ptr<Resource> {
     auto resource = std::make_shared<Resource>();
     resource->kind = tag->kind;
 

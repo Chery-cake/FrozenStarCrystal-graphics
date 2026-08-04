@@ -116,41 +116,49 @@ vk::DeviceSize imageDataSize(vk::Format format, vk::Extent3D extent);
 // Each async overload mirrors the sync version but returns std::future<void>.
 // The returned future completes when the GPU transfer is finished.
 
-std::future<void> transferAsync(Device &device, const AllocatedBuffer &src,
-                                vk::DeviceSize srcOffset, AllocatedBuffer &dst,
+std::future<void> transferAsync(Device &device,
+                                std::shared_ptr<AllocatedBuffer> src,
+                                vk::DeviceSize srcOffset,
+                                std::shared_ptr<AllocatedBuffer> dst,
                                 vk::DeviceSize dstOffset, vk::DeviceSize size);
 
 std::future<void> transferAsync(
-    Device &device, const AllocatedBuffer &src, vk::DeviceSize bufferOffset,
-    AllocatedImage &dst,
+    Device &device, std::shared_ptr<AllocatedBuffer> src,
+    vk::DeviceSize bufferOffset, std::shared_ptr<AllocatedImage> dst,
     vk::ImageLayout dstFinalLayout = vk::ImageLayout::eShaderReadOnlyOptimal);
 
-std::future<void> transferAsync(Device &device, const AllocatedImage &src,
-                                AllocatedBuffer &dst,
+std::future<void> transferAsync(Device &device,
+                                std::shared_ptr<AllocatedImage> src,
+                                std::shared_ptr<AllocatedBuffer> dst,
                                 vk::DeviceSize bufferOffset);
 
 std::future<void> transferAsync(
-    Device &device, const AllocatedImage &src, AllocatedImage &dst,
+    Device &device, std::shared_ptr<AllocatedImage> src,
+    std::shared_ptr<AllocatedImage> dst,
     vk::ImageLayout dstFinalLayout = vk::ImageLayout::eShaderReadOnlyOptimal);
 
-// Cross-device async variants
-std::future<void> transferAsync(Device &srcDevice, const AllocatedBuffer &src,
-                                vk::DeviceSize srcOffset, Device &dstDevice,
-                                AllocatedBuffer &dst, vk::DeviceSize dstOffset,
-                                vk::DeviceSize size);
+std::future<void> transferAsync(std::shared_ptr<Device> srcDevice,
+                                std::shared_ptr<AllocatedBuffer> src,
+                                vk::DeviceSize srcOffset,
+                                std::shared_ptr<Device> dstDevice,
+                                std::shared_ptr<AllocatedBuffer> dst,
+                                vk::DeviceSize dstOffset, vk::DeviceSize size);
 
 std::future<void> transferAsync(
-    Device &srcDevice, const AllocatedBuffer &src, vk::DeviceSize srcOffset,
-    Device &dstDevice, AllocatedImage &dst,
+    std::shared_ptr<Device> srcDevice, std::shared_ptr<AllocatedBuffer> src,
+    vk::DeviceSize srcOffset, std::shared_ptr<Device> dstDevice,
+    std::shared_ptr<AllocatedImage> dst,
     vk::ImageLayout dstFinalLayout = vk::ImageLayout::eShaderReadOnlyOptimal);
 
-std::future<void> transferAsync(Device &srcDevice, const AllocatedImage &src,
-                                Device &dstDevice, AllocatedBuffer &dst,
+std::future<void> transferAsync(std::shared_ptr<Device> srcDevice,
+                                std::shared_ptr<AllocatedImage> src,
+                                std::shared_ptr<Device> dstDevice,
+                                std::shared_ptr<AllocatedBuffer> dst,
                                 vk::DeviceSize dstOffset);
 
 std::future<void> transferAsync(
-    Device &srcDevice, const AllocatedImage &src, Device &dstDevice,
-    AllocatedImage &dst,
+    std::shared_ptr<Device> srcDevice, std::shared_ptr<AllocatedImage> src,
+    std::shared_ptr<Device> dstDevice, std::shared_ptr<AllocatedImage> dst,
     vk::ImageLayout dstFinalLayout = vk::ImageLayout::eShaderReadOnlyOptimal);
 
 } // namespace graphics::vulkan::devices

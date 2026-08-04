@@ -90,7 +90,7 @@ set_target_properties(vk PROPERTIES
 FetchContent_Declare(
     _vma_hpp
     GIT_REPOSITORY https://github.com/YaaZ/VulkanMemoryAllocator-Hpp.git
-    GIT_TAG v3.3.0+3
+    GIT_TAG v3.4.0+1
     GIT_SHALLOW TRUE
 )
 set(VMA_STATIC_VULKAN_FUNCTIONS OFF CACHE BOOL "" FORCE)

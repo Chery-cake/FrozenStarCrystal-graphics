@@ -7,6 +7,7 @@
 // #include <vulkan/vulkan.hpp>
 
 // Provide VMA implementation
+/*
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wnullability-completeness"
 #pragma clang diagnostic ignored "-Wnullability-extension"
@@ -20,5 +21,6 @@
 #include <vk_mem_alloc_static_assertions.hpp>
 
 #pragma clang diagnostic pop
+*/
 
-
+import vk_mem_alloc;

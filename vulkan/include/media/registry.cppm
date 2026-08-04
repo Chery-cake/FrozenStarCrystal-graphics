@@ -56,14 +56,17 @@ public:
   // Returns a shared_ptr — the resource stays alive as long as the caller
   // holds the pointer.
   std::future<std::shared_ptr<Resource>>
-  load(const Tag *tag, std::span<devices::Device *> targetDevices,
+  load(const Tag *tag,
+       std::vector<std::shared_ptr<devices::Device>> targetDevices,
        ImageArrayRegistry &bindless);
 
   // Load on computeDevice and automatically mirror to displayDevice using the
   // cross-device transfer pipeline.
   std::future<std::shared_ptr<Resource>>
-  loadCrossDevice(const Tag *tag, devices::Device &computeDevice,
-                  devices::Device &displayDevice, ImageArrayRegistry &bindless);
+  loadCrossDevice(const Tag *tag,
+                  std::shared_ptr<devices::Device> computeDevice,
+                  std::shared_ptr<devices::Device> displayDevice,
+                  ImageArrayRegistry &bindless);
 
   // For video streams: upload the next decoded frame and advance
   // currentFrame by one (wrapping at totalFrames).

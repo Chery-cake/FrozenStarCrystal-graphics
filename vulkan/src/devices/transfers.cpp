@@ -547,74 +547,99 @@ void transfer(Device &srcDevice, const AllocatedImage &src, Device &dstDevice,
 
 // ---------- async variants ----------
 
-std::future<void> transferAsync(Device &device, const AllocatedBuffer &src,
-                                vk::DeviceSize srcOffset, AllocatedBuffer &dst,
+std::future<void> transferAsync(Device &device,
+                                std::shared_ptr<AllocatedBuffer> src,
+                                vk::DeviceSize srcOffset,
+                                std::shared_ptr<AllocatedBuffer> dst,
                                 vk::DeviceSize dstOffset, vk::DeviceSize size) {
-  return device.submit([&device, &src, srcOffset, &dst, dstOffset, size]() {
-    transfer(device, src, srcOffset, dst, dstOffset, size);
+  return device.submit([src = std::move(src), srcOffset, dst = std::move(dst),
+                        dstOffset, size, &device]() {
+    transfer(device, *src, srcOffset, *dst, dstOffset, size);
   });
 }
 
-std::future<void> transferAsync(Device &device, const AllocatedBuffer &src,
+std::future<void> transferAsync(Device &device,
+                                std::shared_ptr<AllocatedBuffer> src,
                                 vk::DeviceSize bufferOffset,
-                                AllocatedImage &dst,
+                                std::shared_ptr<AllocatedImage> dst,
                                 vk::ImageLayout dstFinalLayout) {
-  return device.submit([&device, &src, bufferOffset, &dst, dstFinalLayout]() {
-    transfer(device, src, bufferOffset, dst, dstFinalLayout);
+  return device.submit([src = std::move(src), bufferOffset,
+                        dst = std::move(dst), dstFinalLayout, &device]() {
+    transfer(device, *src, bufferOffset, *dst, dstFinalLayout);
   });
 }
 
-std::future<void> transferAsync(Device &device, const AllocatedImage &src,
-                                AllocatedBuffer &dst,
+std::future<void> transferAsync(Device &device,
+                                std::shared_ptr<AllocatedImage> src,
+                                std::shared_ptr<AllocatedBuffer> dst,
                                 vk::DeviceSize bufferOffset) {
-  return device.submit([&device, &src, &dst, bufferOffset]() {
-    transfer(device, src, dst, bufferOffset);
-  });
-}
-
-std::future<void> transferAsync(Device &device, const AllocatedImage &src,
-                                AllocatedImage &dst,
-                                vk::ImageLayout dstFinalLayout) {
-  return device.submit([&device, &src, &dst, dstFinalLayout]() {
-    transfer(device, src, dst, dstFinalLayout);
-  });
-}
-
-std::future<void> transferAsync(Device &srcDevice, const AllocatedBuffer &src,
-                                vk::DeviceSize srcOffset, Device &dstDevice,
-                                AllocatedBuffer &dst, vk::DeviceSize dstOffset,
-                                vk::DeviceSize size) {
-  return srcDevice.submit(
-      [&srcDevice, &src, srcOffset, &dstDevice, &dst, dstOffset, size]() {
-        transfer(srcDevice, src, srcOffset, dstDevice, dst, dstOffset, size);
+  return device.submit(
+      [src = std::move(src), dst = std::move(dst), bufferOffset, &device]() {
+        transfer(device, *src, *dst, bufferOffset);
       });
 }
 
-std::future<void> transferAsync(Device &srcDevice, const AllocatedBuffer &src,
-                                vk::DeviceSize srcOffset, Device &dstDevice,
-                                AllocatedImage &dst,
+std::future<void> transferAsync(Device &device,
+                                std::shared_ptr<AllocatedImage> src,
+                                std::shared_ptr<AllocatedImage> dst,
                                 vk::ImageLayout dstFinalLayout) {
-  return srcDevice.submit(
-      [&srcDevice, &src, srcOffset, &dstDevice, &dst, dstFinalLayout]() {
-        transfer(srcDevice, src, srcOffset, dstDevice, dst, dstFinalLayout);
+  return device.submit(
+      [src = std::move(src), dst = std::move(dst), dstFinalLayout, &device]() {
+        transfer(device, *src, *dst, dstFinalLayout);
       });
 }
 
-std::future<void> transferAsync(Device &srcDevice, const AllocatedImage &src,
-                                Device &dstDevice, AllocatedBuffer &dst,
+std::future<void> transferAsync(std::shared_ptr<Device> srcDevice,
+                                std::shared_ptr<AllocatedBuffer> src,
+                                vk::DeviceSize srcOffset,
+                                std::shared_ptr<Device> dstDevice,
+                                std::shared_ptr<AllocatedBuffer> dst,
+                                vk::DeviceSize dstOffset, vk::DeviceSize size) {
+  return srcDevice->submit([srcDevice = std::move(srcDevice),
+                            src = std::move(src), srcOffset,
+                            dstDevice = std::move(dstDevice),
+                            dst = std::move(dst), dstOffset, size]() {
+    transfer(*srcDevice, *src, srcOffset, *dstDevice, *dst, dstOffset, size);
+  });
+}
+
+std::future<void> transferAsync(std::shared_ptr<Device> srcDevice,
+                                std::shared_ptr<AllocatedBuffer> src,
+                                vk::DeviceSize srcOffset,
+                                std::shared_ptr<Device> dstDevice,
+                                std::shared_ptr<AllocatedImage> dst,
+                                vk::ImageLayout dstFinalLayout) {
+  return srcDevice->submit([srcDevice = std::move(srcDevice),
+                            src = std::move(src), srcOffset,
+                            dstDevice = std::move(dstDevice),
+                            dst = std::move(dst), dstFinalLayout]() {
+    transfer(*srcDevice, *src, srcOffset, *dstDevice, *dst, dstFinalLayout);
+  });
+}
+
+std::future<void> transferAsync(std::shared_ptr<Device> srcDevice,
+                                std::shared_ptr<AllocatedImage> src,
+                                std::shared_ptr<Device> dstDevice,
+                                std::shared_ptr<AllocatedBuffer> dst,
                                 vk::DeviceSize dstOffset) {
-  return srcDevice.submit([&srcDevice, &src, &dstDevice, &dst, dstOffset]() {
-    transfer(srcDevice, src, dstDevice, dst, dstOffset);
-  });
+  return srcDevice->submit(
+      [srcDevice = std::move(srcDevice), src = std::move(src),
+       dstDevice = std::move(dstDevice), dst = std::move(dst), dstOffset]() {
+        transfer(*srcDevice, *src, *dstDevice, *dst, dstOffset);
+      });
 }
 
-std::future<void> transferAsync(Device &srcDevice, const AllocatedImage &src,
-                                Device &dstDevice, AllocatedImage &dst,
+std::future<void> transferAsync(std::shared_ptr<Device> srcDevice,
+                                std::shared_ptr<AllocatedImage> src,
+                                std::shared_ptr<Device> dstDevice,
+                                std::shared_ptr<AllocatedImage> dst,
                                 vk::ImageLayout dstFinalLayout) {
-  return srcDevice.submit(
-      [&srcDevice, &src, &dstDevice, &dst, dstFinalLayout]() {
-        transfer(srcDevice, src, dstDevice, dst, dstFinalLayout);
-      });
+  return srcDevice->submit([srcDevice = std::move(srcDevice),
+                            src = std::move(src),
+                            dstDevice = std::move(dstDevice),
+                            dst = std::move(dst), dstFinalLayout]() {
+    transfer(*srcDevice, *src, *dstDevice, *dst, dstFinalLayout);
+  });
 }
 
 } // namespace graphics::vulkan::devices
