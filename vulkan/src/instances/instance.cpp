@@ -202,7 +202,7 @@ Instance::~Instance() {
   instance_.reset();
   context_.reset();
 
-  std::cout << "[Instance] Shutdown complete";
+  std::cout << "[Instance] Shutdown complete\n";
 }
 
 std::vector<std::string> Instance::getAvailableExtensions() {

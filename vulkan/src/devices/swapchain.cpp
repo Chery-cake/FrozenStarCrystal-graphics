@@ -151,21 +151,25 @@ Swapchain::Swapchain(
   needRecreation_.store(false, std::memory_order_release);
 
   imageAvailableSemaphores_.reserve(framesInFlight_);
-  renderFinishedSemaphores_.reserve(framesInFlight_);
+  renderFinishedSemaphores_.reserve(info_.imageCount);
   inFlightFences_.reserve(framesInFlight_);
   waitFences_.reserve(framesInFlight_);
 
   std::ranges::for_each(
       std::views::iota(0U, framesInFlight_),
-      [&images = imageAvailableSemaphores_,
-       &renders = renderFinishedSemaphores_, &flightFences = inFlightFences_,
+      [&images = imageAvailableSemaphores_, &flightFences = inFlightFences_,
        &waitFences = waitFences_, &device = device_](uint32_t) {
         images.emplace_back(*device, vk::SemaphoreCreateInfo{});
-        renders.emplace_back(*device, vk::SemaphoreCreateInfo{});
         flightFences.emplace_back(
             *device, vk::FenceCreateInfo{vk::FenceCreateFlagBits::eSignaled});
         waitFences.emplace_back(
             *device, vk::FenceCreateInfo{vk::FenceCreateFlagBits::eSignaled});
+      });
+
+  std::ranges::for_each(
+      std::views::iota(0U, info_.imageCount),
+      [&renders = renderFinishedSemaphores_, &device = device_](uint32_t) {
+        renders.emplace_back(*device, vk::SemaphoreCreateInfo{});
       });
 
   std::println("[Swapchain] Created: {}x{} ({} images)", info_.extent.width,
@@ -254,6 +258,14 @@ bool Swapchain::recreateSwapchain(uint32_t newWidth, uint32_t newHeight) {
 
   auto images = swapchain_->getImages();
   frames_.resize(images.size());
+
+  renderFinishedSemaphores_.clear();
+  renderFinishedSemaphores_.reserve(info_.imageCount);
+  std::ranges::for_each(
+      std::views::iota(info_.imageCount),
+      [&renders = renderFinishedSemaphores_, &device = device_](uint32_t) {
+        renders.emplace_back(*device, vk::SemaphoreCreateInfo{});
+      });
 
   std::ranges::for_each(std::views::iota(0U, images.size()),
                         [&frame = frames_, &images](uint32_t i) {
@@ -355,7 +367,7 @@ std::expected<vk::Result, Swapchain::PresentError> Swapchain::submitAndPresent(
 
   // Pick the semaphores for the current in‑flight slot
   vk::Semaphore imageAvailable = *imageAvailableSemaphores_[currentFrame_];
-  vk::Semaphore renderFinished = *renderFinishedSemaphores_[currentFrame_];
+  vk::Semaphore renderFinished = *renderFinishedSemaphores_[imageIndex];
 
   std::vector<vk::SubmitInfo> infos(submitInfos.begin(), submitInfos.end());
 
