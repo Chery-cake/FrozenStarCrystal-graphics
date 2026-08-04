@@ -3,10 +3,10 @@ module;
 export module graphics;
 
 import :check;
+import :vulkan_backend;
 
 #if defined(GRAPHICS_BACKEND_VULKAN)
 export import graphics.vulkan;
-
 #else
 #error "No graphics backend selected"
 #endif
@@ -14,7 +14,7 @@ export import graphics.vulkan;
 export namespace graphics {
 
 #if defined(GRAPHICS_BACKEND_VULKAN)
-using GraphicsBackend = void *;
+using GraphicsBackend = VulkanBackend;
 #else
 #error "No graphics backend selected"
 #endif
