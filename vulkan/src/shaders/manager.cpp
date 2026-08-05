@@ -94,16 +94,20 @@ Manager::getModule(const Shader *tag,
 }
 
 void Manager::reloadShader(const Shader *tag) {
-  // 1. Force re‑compilation
-  shaderModuleRegistry_.remove(tag); // fires signals if needed
+  // 1. Remove stale cached binary
+  shaderModuleRegistry_.remove(tag);
+
+  // 2. Force recompilation
+  compiler_->askRecompile(*tag);
+
+  // 3. Re-emplace using the freshly compiled binary
   shaderModuleRegistry_.emplace(tag, [&compiler = compiler_](const Shader &s) {
-    return compiler->getBinary(
-        s); // this will recompile because old binary is gone
+    return compiler->getBinary(s);
   });
   auto compiledMod = shaderModuleRegistry_.getStored(tag);
 
-  // 2. Recreate modules for every device that has this shader
-  std::shared_lock lock(deviceMtx_);
+  // 4. Recreate modules for every device that has this shader
+  std::unique_lock lock(deviceMtx_);
   std::ranges::for_each(deviceRegistries_, [&tag, &compiledMod](auto &pair) {
     auto &&[device, registry] = pair;
 
