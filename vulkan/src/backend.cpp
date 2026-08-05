@@ -1,16 +1,12 @@
 module;
 
-export module graphics:vulkan.backend_impl;
+module graphics.vulkan;
 
 import std.compat;
 import vulkan;
 import concurrency;
 
-import graphics.vulkan;
-
-import :vulkan.backend;
-
-namespace graphics {
+namespace graphics::vulkan {
 
 Backend::Backend(const std::shared_ptr<concurrency::pool::Manager> &poolManager)
     : poolManager_(poolManager) {
@@ -39,7 +35,7 @@ Backend::~Backend() {
   std::cout << "[Backend] Cleared\n";
 }
 
-inline RenderContext Backend::beginFrame() {
+RenderContext Backend::beginFrame() {
   currentFrame_ = RenderContext{};
 
   auto devicesWithWindows = deviceManager_->getDevicesWithWindows();
@@ -157,7 +153,7 @@ inline RenderContext Backend::beginFrame() {
   return currentFrame_;
 }
 
-inline void Backend::endFrame() {
+void Backend::endFrame() {
 
   auto validWindows =
       currentFrame_.windows |
@@ -203,7 +199,7 @@ inline void Backend::endFrame() {
   currentFrame_ = RenderContext{};
 }
 
-inline void Backend::waitIdle() {
+void Backend::waitIdle() {
   if (!deviceManager_) {
     return;
   }
@@ -212,14 +208,13 @@ inline void Backend::waitIdle() {
                         [](const auto &entry) { entry.device->waitIdle(); });
 }
 
-inline void
-Backend::addRequiredExtensions(std::span<const char *const> extensions) {
+void Backend::addRequiredExtensions(std::span<const char *const> extensions) {
   std::ranges::for_each(extensions, [](const char *ext) {
     vulkan::instances::Config::instance().addInstanceExtension(ext);
   });
 }
 
-inline void Backend::createWindow(
+void Backend::createWindow(
     const std::shared_ptr<vulkan::devices::WindowInfo> &windowInfo,
     uint32_t framesInFlight, vk::Extent2D extent) {
   auto entries = deviceManager_->getDeviceEntries();
@@ -230,7 +225,7 @@ inline void Backend::createWindow(
   createWindow(entries.front().device, windowInfo, framesInFlight, extent);
 }
 
-inline void Backend::createWindow(
+void Backend::createWindow(
     const std::shared_ptr<vulkan::devices::Device> &device,
     const std::shared_ptr<vulkan::devices::WindowInfo> &windowInfo,
     uint32_t framesInFlight, vk::Extent2D extent) {
@@ -262,7 +257,7 @@ inline void Backend::createWindow(
       imageCount); // one command buffer per swapchain image
 }
 
-inline void Backend::resizeWindow(
+void Backend::resizeWindow(
     const std::shared_ptr<vulkan::devices::WindowInfo> &windowInfo,
     uint32_t newWidth, uint32_t newHeight) {
   if (windowInfo->swapchain) {
@@ -270,7 +265,7 @@ inline void Backend::resizeWindow(
   }
 }
 
-inline bool Backend::removeWindow(
+bool Backend::removeWindow(
     const std::shared_ptr<vulkan::devices::WindowInfo> &windowInfo) {
   // Remove from cmd pool map
   frameCmdPools_.erase(windowInfo);
@@ -281,9 +276,9 @@ inline bool Backend::removeWindow(
   });
 }
 
-inline void Backend::reloadShader(const vulkan::shaders::Shader *tag) {
+void Backend::reloadShader(const vulkan::shaders::Shader *tag) {
   shaderManager_->reloadShader(tag);
   pipelineManager_->invalidateShader(tag);
 }
 
-} // namespace graphics
+} // namespace graphics::vulkan

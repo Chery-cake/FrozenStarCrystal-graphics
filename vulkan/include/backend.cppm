@@ -2,15 +2,18 @@ module;
 
 #include "FrozenStarCrystal-graphics_export.h"
 
-export module graphics:vulkan.backend;
+export module graphics.vulkan:backend;
 
 import std.compat;
 import vulkan;
 import concurrency;
 
-import graphics.vulkan;
+import graphics.vulkan.instances;
+import graphics.vulkan.devices;
+import graphics.vulkan.shaders;
+import graphics.vulkan.pipelines;
 
-export namespace graphics {
+export namespace graphics::vulkan {
 
 inline constexpr concurrency::pool::Pool gpuPoolDesc{.name = "gpuPool"};
 
@@ -20,8 +23,8 @@ struct FROZENSTARCRYSTAL_GRAPHICS_API RenderContext {
 
   // Per-window frame data
   struct WindowFrame {
-    std::shared_ptr<vulkan::devices::Device> device;
-    std::shared_ptr<vulkan::devices::WindowInfo> windowInfo;
+    std::shared_ptr<devices::Device> device;
+    std::shared_ptr<devices::WindowInfo> windowInfo;
     uint32_t imageIndex = 0;
     vk::CommandBuffer cmd; // primary command buffer, already begun
     vk::Image image;       // swapchain image for this frame
@@ -37,16 +40,16 @@ struct FROZENSTARCRYSTAL_GRAPHICS_API RenderContext {
 };
 
 struct FROZENSTARCRYSTAL_GRAPHICS_API WindowCmdData {
-  vulkan::devices::CommandBufferPool pool;
+  devices::CommandBufferPool pool;
   uint32_t framesInFlight = 0;
 };
 
 class FROZENSTARCRYSTAL_GRAPHICS_API Backend {
 private:
-  std::unique_ptr<vulkan::instances::Instance> instance_;
-  std::unique_ptr<vulkan::devices::Manager> deviceManager_;
-  std::unique_ptr<vulkan::shaders::Manager> shaderManager_;
-  std::unique_ptr<vulkan::pipelines::Manager> pipelineManager_;
+  std::unique_ptr<instances::Instance> instance_;
+  std::unique_ptr<devices::Manager> deviceManager_;
+  std::unique_ptr<shaders::Manager> shaderManager_;
+  std::unique_ptr<pipelines::Manager> pipelineManager_;
   std::shared_ptr<concurrency::pool::ThreadPool> gpuPool_;
   std::shared_ptr<concurrency::pool::Manager> poolManager_;
 
@@ -54,8 +57,7 @@ private:
   RenderContext currentFrame_;
 
   // Per-window command buffer pools (one pool per WindowInfo pointer)
-  std::unordered_map<std::shared_ptr<vulkan::devices::WindowInfo>,
-                     WindowCmdData>
+  std::unordered_map<std::shared_ptr<devices::WindowInfo>, WindowCmdData>
       frameCmdPools_;
 
 public:
@@ -96,51 +98,42 @@ public:
   // Register a GLFW (or other) surface as a window.
   // Must be called after initialize() and before the first beginFrame().
   // framesInFlight defaults to 2.
-  void
-  createWindow(const std::shared_ptr<vulkan::devices::WindowInfo> &windowInfo,
-               uint32_t framesInFlight, vk::Extent2D extent);
-  void
-  createWindow(const std::shared_ptr<vulkan::devices::Device> &device,
-               const std::shared_ptr<vulkan::devices::WindowInfo> &windowInfo,
-               uint32_t framesInFlight, vk::Extent2D extent);
+  void createWindow(const std::shared_ptr<devices::WindowInfo> &windowInfo,
+                    uint32_t framesInFlight, vk::Extent2D extent);
+  void createWindow(const std::shared_ptr<devices::Device> &device,
+                    const std::shared_ptr<devices::WindowInfo> &windowInfo,
+                    uint32_t framesInFlight, vk::Extent2D extent);
 
   // Resize the swapchain for a window (call from your resize callback).
   static void
-  resizeWindow(const std::shared_ptr<vulkan::devices::WindowInfo> &windowInfo,
+  resizeWindow(const std::shared_ptr<devices::WindowInfo> &windowInfo,
                uint32_t newWidth, uint32_t newHeight);
 
   // Remove and destroy a window's swapchain.
-  bool
-  removeWindow(const std::shared_ptr<vulkan::devices::WindowInfo> &windowInfo);
+  bool removeWindow(const std::shared_ptr<devices::WindowInfo> &windowInfo);
 
   // Hot-reload: recompile a shader and invalidate dependent pipelines.
-  void reloadShader(const vulkan::shaders::Shader *tag);
+  void reloadShader(const shaders::Shader *tag);
 
   // ── Accessors ──────────────────────────────────────────────────────────
-  [[nodiscard]] vulkan::instances::Instance &getInstance() {
+  [[nodiscard]] instances::Instance &getInstance() { return *instance_; }
+  [[nodiscard]] const instances::Instance &getInstance() const {
     return *instance_;
   }
-  [[nodiscard]] const vulkan::instances::Instance &getInstance() const {
-    return *instance_;
-  }
-  [[nodiscard]] vulkan::devices::Manager &getDeviceManager() {
+  [[nodiscard]] devices::Manager &getDeviceManager() { return *deviceManager_; }
+  [[nodiscard]] const devices::Manager &getDeviceManager() const {
     return *deviceManager_;
   }
-  [[nodiscard]] const vulkan::devices::Manager &getDeviceManager() const {
-    return *deviceManager_;
-  }
-  [[nodiscard]] vulkan::shaders::Manager &getShaderManager() {
+  [[nodiscard]] shaders::Manager &getShaderManager() { return *shaderManager_; }
+  [[nodiscard]] const shaders::Manager &getShaderManager() const {
     return *shaderManager_;
   }
-  [[nodiscard]] const vulkan::shaders::Manager &getShaderManager() const {
-    return *shaderManager_;
-  }
-  [[nodiscard]] vulkan::pipelines::Manager &getPipelineManager() {
+  [[nodiscard]] pipelines::Manager &getPipelineManager() {
     return *pipelineManager_;
   }
-  [[nodiscard]] const vulkan::pipelines::Manager &getPipelineManager() const {
+  [[nodiscard]] const pipelines::Manager &getPipelineManager() const {
     return *pipelineManager_;
   }
 };
 
-} // namespace graphics
+} // namespace graphics::vulkan

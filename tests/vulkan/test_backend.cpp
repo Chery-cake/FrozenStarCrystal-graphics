@@ -43,7 +43,7 @@ int main() {
 
     // ── 2. Add GLFW surface extensions before initialize ───────────────
     auto poolManager = std::make_shared<concurrency::pool::Manager>();
-    poolManager->createPool(&graphics::gpuPoolDesc, 2);
+    poolManager->createPool(&gpuPoolDesc, 2);
 
     graphics::GraphicsBackend backend{poolManager};
 

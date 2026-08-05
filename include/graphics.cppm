@@ -6,8 +6,6 @@ import :check;
 
 #if defined(GRAPHICS_BACKEND_VULKAN)
 export import graphics.vulkan;
-export import :vulkan.backend;
-export import :vulkan.backend_impl;
 
 #else
 #error "No graphics backend selected"
@@ -16,7 +14,7 @@ export import :vulkan.backend_impl;
 export namespace graphics {
 
 #if defined(GRAPHICS_BACKEND_VULKAN)
-using GraphicsBackend = Backend;
+using GraphicsBackend = vulkan::Backend;
 #else
 #error "No graphics backend selected"
 #endif

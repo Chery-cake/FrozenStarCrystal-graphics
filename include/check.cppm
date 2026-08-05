@@ -5,8 +5,7 @@ export module graphics:check;
 import std.compat;
 
 #if defined(GRAPHICS_BACKEND_VULKAN)
-import :vulkan.backend;
-import :vulkan.backend_impl;
+import graphics.vulkan;
 
 #else
 #error "No graphics backend selected"
@@ -20,7 +19,7 @@ concept ApiCheck = requires(T &api) {
   std::not_equal_to<void>();
 
   // Frame loop
-  { api.beginFrame() } -> std::same_as<RenderContext>;
+  { api.beginFrame() } -> std::same_as<vulkan::RenderContext>;
   { api.endFrame() } -> std::same_as<void>;
   // Sync
   { api.waitIdle() } -> std::same_as<void>;
