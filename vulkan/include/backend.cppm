@@ -134,6 +134,13 @@ public:
   [[nodiscard]] const pipelines::Manager &getPipelineManager() const {
     return *pipelineManager_;
   }
+
+  // Convenience: returns the first (highest-scored) device, or nullptr.
+  [[nodiscard]] std::shared_ptr<devices::Device> getFirstDevice() {
+    auto entries = deviceManager_->getDeviceEntries();
+    if (entries.empty()) return nullptr;
+    return entries.front().device;
+  }
 };
 
 } // namespace graphics::vulkan
