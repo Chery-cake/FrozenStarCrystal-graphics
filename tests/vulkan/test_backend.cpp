@@ -244,7 +244,7 @@ static void testBufferTransfer(Backend &backend) {
     src.unmap();
   }
 
-  devices::transfer(*dev, src, 0, dst, 0, 128);
+  devices::transfer(dev, src, 0, dst, 0, 128);
 
   // Verify
   {
@@ -296,7 +296,7 @@ static void testImageTransfers(Backend &backend) {
                                         vk::ImageUsageFlagBits::eSampled,
                                .debugName = "gpu_test_image"});
 
-  devices::transfer(*dev, staging, 0, gpuImg,
+  devices::transfer(dev, staging, 0, gpuImg,
                     vk::ImageLayout::eShaderReadOnlyOptimal);
   checkMsg(gpuImg.currentLayout == vk::ImageLayout::eShaderReadOnlyOptimal,
            "gpuImg.currentLayout != eShaderReadOnlyOptimal after transfer");
@@ -308,7 +308,7 @@ static void testImageTransfers(Backend &backend) {
                                 .access = Access::stagingReadback,
                                 .debugName = "img_staging_dst"});
 
-  devices::transfer(*dev, gpuImg, readback, 0);
+  devices::transfer(dev, gpuImg, readback, 0);
 
   {
     readback.invalidate();
@@ -352,7 +352,7 @@ static void testAsyncTransfer(Backend &backend) {
     srcBuf->unmap();
   }
 
-  auto fut = devices::transferAsync(*dev, srcBuf, 0, dstBuf, 0, sz);
+  auto fut = devices::transferAsync(dev, srcBuf, 0, dstBuf, 0, sz);
   fut.get();
 
   {
@@ -524,12 +524,12 @@ static void testExplicitDeviceWindow(Backend &backend, GLFWwindow *glfwWin,
 }
 
 // =========================================================================
-// testRenderLoop
+// testGraphicsLoop
 // =========================================================================
 static void
-testRenderLoop(Backend &backend,
-               const std::shared_ptr<devices::WindowInfo> &windowInfo,
-               GLFWwindow *glfwWin) {
+testGraphicsLoop(Backend &backend,
+                 const std::shared_ptr<devices::WindowInfo> &windowInfo,
+                 GLFWwindow *glfwWin) {
   int frameCount = 0;
   int w = 0, h = 0;
 
@@ -554,12 +554,108 @@ testRenderLoop(Backend &backend,
       }
     }
     if (!anyValid) {
+      backend.endFrame(); // ← always call endFrame to clear the acquired
+                          // context
       continue;
     }
 
     backend.endFrame();
     ++frameCount;
   }
+
+  backend.waitIdle(); // ← drain GPU before cleanup asserts on allocations
+
+  checkMsg(frameCount > 0, "testGraphicsLoop: no frames were rendered");
+  std::cout << "[PASS] testGraphicsLoop (" << frameCount << " frames)\n";
+}
+
+// =========================================================================
+// testRenderLoop
+// =========================================================================
+static void
+testRenderLoop(Backend &backend,
+               const std::shared_ptr<devices::WindowInfo> &windowInfo,
+               GLFWwindow *glfwWin) {
+  // ── Prepare the pipeline ─────────────────────────────────────────────
+  auto dev = backend.getFirstDevice();
+  checkMsg(dev != nullptr, "getFirstDevice() returned nullptr");
+
+  // Get swapchain colour format (all images share the same format)
+  auto imgData = windowInfo->swapchain->getSwapchainImageData(0);
+  checkMsg(imgData.has_value(),
+           "testRenderLoop: could not retrieve swapchain image data");
+  vk::Format colorFormat = imgData->format;
+
+  // Create a simple empty pipeline layout
+  vk::PipelineLayoutCreateInfo layoutCI{};
+  vk::raii::PipelineLayout pipelineLayout{*dev->getDevicePtr(), layoutCI};
+
+  // Build dynamic pipeline info (exactly like test_main)
+  pipelines::DynamicPipelineInfo dynInfo;
+  dynInfo.tag.shaderTag = &g_shader;
+  dynInfo.tag.layout = *pipelineLayout;
+  dynInfo.inputAssembly.topology = vk::PrimitiveTopology::eTriangleList;
+  dynInfo.rasterization.cullMode = vk::CullModeFlagBits::eNone;
+  dynInfo.depthStencil.depthTest = false;
+  dynInfo.attachments.color = {colorFormat};
+  dynInfo.multisample.samples = vk::SampleCountFlagBits::e1;
+
+  // Get or create the pipeline
+  auto pipelineResult =
+      backend.getPipelineManager().getOrCreate(dynInfo, dev->getDevicePtr());
+  checkMsg(pipelineResult.has_value(),
+           "testRenderLoop: failed to create dynamic pipeline");
+  auto pipeline = *pipelineResult; // shared_ptr<vk::raii::Pipeline>
+
+  // ── Render loop ──────────────────────────────────────────────────────
+  int frameCount = 0;
+  int w = 0, h = 0;
+
+  for (int i = 0; i < 120; ++i) {
+    glfwPollEvents();
+    glfwGetFramebufferSize(glfwWin, &w, &h);
+
+    if (windowInfo->swapchain && windowInfo->swapchain->needRecreation()) {
+      Backend::resizeWindow(windowInfo, static_cast<uint32_t>(w),
+                            static_cast<uint32_t>(h));
+      continue;
+    }
+
+    auto ctx = backend.beginFrame();
+    bool anyValid = false;
+    for (auto &wf : ctx.windows) {
+      if (!wf.valid) {
+        Backend::resizeWindow(wf.windowInfo, static_cast<uint32_t>(w),
+                              static_cast<uint32_t>(h));
+      } else {
+        anyValid = true;
+
+        // Record draw commands into the already‑opened command buffer
+        vk::CommandBuffer cmd = wf.cmd;
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline);
+
+        vk::Viewport viewport{0.0f,
+                              0.0f,
+                              static_cast<float>(wf.extent.width),
+                              static_cast<float>(wf.extent.height),
+                              0.0f,
+                              1.0f};
+        cmd.setViewport(0, viewport);
+        cmd.setScissor(0, vk::Rect2D{{0, 0}, wf.extent});
+        cmd.draw(3, 1, 0, 0); // 3 vertices → triangle
+      }
+    }
+
+    if (!anyValid) {
+      backend.endFrame();
+      continue;
+    }
+
+    backend.endFrame();
+    ++frameCount;
+  }
+
+  backend.waitIdle(); // drain GPU before cleanup
 
   checkMsg(frameCount > 0, "testRenderLoop: no frames were rendered");
   std::cout << "[PASS] testRenderLoop (" << frameCount << " frames)\n";
@@ -634,6 +730,7 @@ int main() {
     testPipelineManager(backend, windowInfo);
     testExplicitDeviceWindow(backend, window, static_cast<uint32_t>(width),
                              static_cast<uint32_t>(height));
+    testGraphicsLoop(backend, windowInfo, window);
     testRenderLoop(backend, windowInfo, window);
 
     // ── 5. Cleanup

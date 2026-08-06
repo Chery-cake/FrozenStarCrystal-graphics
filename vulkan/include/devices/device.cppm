@@ -2,6 +2,8 @@ module;
 
 #include "FrozenStarCrystal-graphics_export.h"
 
+#include <vk_mem_alloc.h>
+
 export module graphics.vulkan.devices:device;
 
 import std.compat;
@@ -16,180 +18,188 @@ import concurrency;
 export namespace graphics::vulkan::devices {
 
 class FROZENSTARCRYSTAL_GRAPHICS_API Device {
-  private:
-    std::shared_ptr<vk::raii::PhysicalDevice> physicalDevice_;
-    std::shared_ptr<vk::raii::Device> device_;
-    GPUInfo info_;
-    std::unique_ptr<vma::raii::Allocator> allocator_;
+private:
+  std::shared_ptr<vk::raii::PhysicalDevice> physicalDevice_;
+  std::shared_ptr<vk::raii::Device> device_;
+  GPUInfo info_;
 
-    vk::Queue graphicsQueue_;
-    vk::Queue computeQueue_;
-    vk::Queue transferQueue_;
-    vk::Queue sparseBidingQueue_;
-    vk::Queue protectedQueue_;
+  uint32_t frameIndex_ = 0;
+  std::unique_ptr<vma::raii::Allocator> allocator_;
 
-    std::shared_ptr<concurrency::pool::ThreadPool> gpuPool_;
+  vk::Queue graphicsQueue_;
+  vk::Queue computeQueue_;
+  vk::Queue transferQueue_;
+  vk::Queue sparseBidingQueue_;
+  vk::Queue protectedQueue_;
 
-    mutable std::mutex deviceMtx_;
+  std::shared_ptr<concurrency::pool::ThreadPool> gpuPool_;
 
-    std::vector<AllocatedImage> computeImages_;
-    mutable std::mutex computeImageMtx_;
+  mutable std::mutex deviceMtx_;
 
-    // Registered windows on this device
-    std::vector<std::shared_ptr<WindowInfo>> windows_;
-    mutable std::mutex windowMtx_;
+  std::vector<AllocatedImage> computeImages_;
+  mutable std::mutex computeImageMtx_;
 
-    std::unordered_map<std::thread::id, std::unique_ptr<CommandBufferPool>>
-        graphicsPools_; // thread_local
-    std::unordered_map<std::thread::id, std::unique_ptr<CommandBufferPool>>
-        computePools_; // thread_local
-    std::unordered_map<std::thread::id, std::unique_ptr<CommandBufferPool>>
-        transferPools_; // thread_local
-    std::unordered_map<std::thread::id, std::unique_ptr<CommandBufferPool>>
-        sparseBidingPools_; // thread_local
-    std::unordered_map<std::thread::id, std::unique_ptr<CommandBufferPool>>
-        protectedPools_; // thread_local
-    std::shared_mutex poolsMtx_;
+  // Registered windows on this device
+  std::vector<std::shared_ptr<WindowInfo>> windows_;
+  mutable std::mutex windowMtx_;
 
-    std::vector<std::string> getAvailableExtensions();
+  std::unordered_map<std::thread::id, std::unique_ptr<CommandBufferPool>>
+      graphicsPools_; // thread_local
+  std::unordered_map<std::thread::id, std::unique_ptr<CommandBufferPool>>
+      computePools_; // thread_local
+  std::unordered_map<std::thread::id, std::unique_ptr<CommandBufferPool>>
+      transferPools_; // thread_local
+  std::unordered_map<std::thread::id, std::unique_ptr<CommandBufferPool>>
+      sparseBidingPools_; // thread_local
+  std::unordered_map<std::thread::id, std::unique_ptr<CommandBufferPool>>
+      protectedPools_; // thread_local
+  std::shared_mutex poolsMtx_;
 
-    template <std::invocable<vk::CommandBuffer> F>
-    void submitOneShot(vk::Queue queue, uint32_t queueFamily, F &&recordFn);
+  std::vector<std::string> getAvailableExtensions();
 
-    std::unordered_set<std::thread::id> touchedThreads_;
-    std::shared_ptr<uint8_t> aliveToken_;
-    void markThreadTouched();
-    void removeThreadPools(std::thread::id tid);
+  template <std::invocable<vk::CommandBuffer> F>
+  void submitOneShot(vk::Queue queue, uint32_t queueFamily, F &&recordFn);
 
-  public:
-    Device(const vk::raii::Instance &instance,
-           vk::PhysicalDevice physicalDevice, const GPUInfo &info,
-           const std::shared_ptr<concurrency::pool::ThreadPool> &gpuPool);
-    ~Device();
+  std::unordered_set<std::thread::id> touchedThreads_;
+  std::shared_ptr<uint8_t> aliveToken_;
+  void markThreadTouched();
+  void removeThreadPools(std::thread::id tid);
 
-    // Disable copy & move
-    Device(const Device &) = delete;
-    Device &operator=(const Device &) = delete;
-    Device(Device &&other) = delete;
-    Device &operator=(Device &&other) = delete;
+public:
+  Device(const vk::raii::Instance &instance, vk::PhysicalDevice physicalDevice,
+         const GPUInfo &info,
+         const std::shared_ptr<concurrency::pool::ThreadPool> &gpuPool);
+  ~Device();
 
-    void createWindow(const std::shared_ptr<WindowInfo> &windowInfo,
-                      uint32_t framesInFlight,
-                      Swapchain::SwapchainInfo &swapInfo);
-    void createWindow(const std::shared_ptr<WindowInfo> &windowInfo,
-                      uint32_t framesInFlight);
-    bool removeWindow(const std::shared_ptr<WindowInfo> &info);
+  // Disable copy & move
+  Device(const Device &) = delete;
+  Device &operator=(const Device &) = delete;
+  Device(Device &&other) = delete;
+  Device &operator=(Device &&other) = delete;
 
-    [[nodiscard]] AllocatedBuffer
-    createBuffer(const BufferCreateInfo &info); // TODO return expected
-    [[nodiscard]] AllocatedImage
-    createImage(const ImageCreateInfo &info); // TODO return expected
+  void createWindow(const std::shared_ptr<WindowInfo> &windowInfo,
+                    uint32_t framesInFlight,
+                    Swapchain::SwapchainInfo &swapInfo);
+  void createWindow(const std::shared_ptr<WindowInfo> &windowInfo,
+                    uint32_t framesInFlight);
+  bool removeWindow(const std::shared_ptr<WindowInfo> &info);
 
-    [[nodiscard]] CommandBufferPool &getGraphicsPool();
-    [[nodiscard]] CommandBufferPool &getComputePool();
-    [[nodiscard]] CommandBufferPool &getTransferPool();
-    [[nodiscard]] CommandBufferPool &getSparseBidingPool();
-    [[nodiscard]] CommandBufferPool &getProtectedPool();
+  [[nodiscard]] AllocatedBuffer
+  createBuffer(const BufferCreateInfo &info); // TODO return expected
+  [[nodiscard]] AllocatedImage
+  createImage(const ImageCreateInfo &info); // TODO return expected
 
-    [[nodiscard]] const GPUInfo &getInfo() const { return info_; }
-    [[nodiscard]] std::vector<std::shared_ptr<WindowInfo>> getWindows() const {
-        std::unique_lock lock(windowMtx_);
-        return windows_;
-    }
+  [[nodiscard]] CommandBufferPool &getGraphicsPool();
+  [[nodiscard]] CommandBufferPool &getComputePool();
+  [[nodiscard]] CommandBufferPool &getTransferPool();
+  [[nodiscard]] CommandBufferPool &getSparseBidingPool();
+  [[nodiscard]] CommandBufferPool &getProtectedPool();
 
-    [[nodiscard]] std::shared_ptr<vk::raii::PhysicalDevice>
-    getPhysicalDevicePtr() {
-        return physicalDevice_;
-    }
-    [[nodiscard]] vk::PhysicalDevice getPhysicalDevice() const {
-        return physicalDevice_ ? **physicalDevice_ : vk::PhysicalDevice{};
-    }
-    [[nodiscard]] const vk::raii::PhysicalDevice &
-    getRaiiPhysicalDevice() const {
-        return *physicalDevice_;
-    }
+  [[nodiscard]] const GPUInfo &getInfo() const { return info_; }
+  [[nodiscard]] std::vector<std::shared_ptr<WindowInfo>> getWindows() const {
+    std::unique_lock lock(windowMtx_);
+    return windows_;
+  }
 
-    [[nodiscard]] std::shared_ptr<vk::raii::Device> getDevicePtr() const {
-        return device_;
-    }
-    [[nodiscard]] vk::Device getDevice() const {
-        return device_ ? **device_ : vk::Device{};
-    }
-    [[nodiscard]] const vk::raii::Device &getRaiiDevice() const {
-        return *device_;
-    }
+  [[nodiscard]] std::shared_ptr<vk::raii::PhysicalDevice>
+  getPhysicalDevicePtr() {
+    return physicalDevice_;
+  }
+  [[nodiscard]] vk::PhysicalDevice getPhysicalDevice() const {
+    return physicalDevice_ ? **physicalDevice_ : vk::PhysicalDevice{};
+  }
+  [[nodiscard]] const vk::raii::PhysicalDevice &getRaiiPhysicalDevice() const {
+    return *physicalDevice_;
+  }
 
-    [[nodiscard]] vma::Allocator getAllocator() const {
-        return allocator_ ? **allocator_ : vma::Allocator{};
-    }
-    [[nodiscard]] const vma::raii::Allocator &getRaiiAllocator() const {
-        return *allocator_;
-    }
+  [[nodiscard]] std::shared_ptr<vk::raii::Device> getDevicePtr() const {
+    return device_;
+  }
+  [[nodiscard]] vk::Device getDevice() const {
+    return device_ ? **device_ : vk::Device{};
+  }
+  [[nodiscard]] const vk::raii::Device &getRaiiDevice() const {
+    return *device_;
+  }
 
-    [[nodiscard]] vk::Queue getGraphicsQueue() const { return graphicsQueue_; }
-    [[nodiscard]] vk::Queue getComputeQueue() const { return computeQueue_; }
-    [[nodiscard]] vk::Queue getTransferQueue() const { return transferQueue_; }
-    [[nodiscard]] vk::Queue getSparseBidingQueue() const {
-        return sparseBidingQueue_;
-    }
-    [[nodiscard]] vk::Queue getProtectedQueue() const {
-        return protectedQueue_;
-    }
-    [[nodiscard]] const QueueFamilyIndices &getQueueFamilies() const {
-        return info_.queueFamilies;
-    }
+  [[nodiscard]] vma::Allocator getAllocator() const {
+    return allocator_ ? **allocator_ : vma::Allocator{};
+  }
+  [[nodiscard]] const vma::raii::Allocator &getRaiiAllocator() const {
+    return *allocator_;
+  }
 
-    void waitIdle() const { device_->waitIdle(); };
+  [[nodiscard]] vk::Queue getGraphicsQueue() const { return graphicsQueue_; }
+  [[nodiscard]] vk::Queue getComputeQueue() const { return computeQueue_; }
+  [[nodiscard]] vk::Queue getTransferQueue() const { return transferQueue_; }
+  [[nodiscard]] vk::Queue getSparseBidingQueue() const {
+    return sparseBidingQueue_;
+  }
+  [[nodiscard]] vk::Queue getProtectedQueue() const { return protectedQueue_; }
+  [[nodiscard]] const QueueFamilyIndices &getQueueFamilies() const {
+    return info_.queueFamilies;
+  }
 
-    template <concurrency::pool::coroutine::policy::Queue QP>
-    concurrency::pool::coroutine::Scheduler<QP> schedule() noexcept {
-        return gpuPool_->schedule<QP>();
-    }
+  void waitIdle() const { device_->waitIdle(); };
 
-    template <typename F, typename... Args>
-    auto submit(F &&f, Args &&...args)
-        -> std::future<std::invoke_result_t<F, Args...>> {
-        return gpuPool_->submit(std::forward<F>(f),
-                                std::forward<Args>(args)...);
-    }
+  template <concurrency::pool::coroutine::policy::Queue QP>
+  concurrency::pool::coroutine::Scheduler<QP> schedule() noexcept {
+    return gpuPool_->schedule<QP>();
+  }
 
-    [[nodiscard]] size_t workerCount() const noexcept;
+  template <typename F, typename... Args>
+  auto submit(F &&f, Args &&...args)
+      -> std::future<std::invoke_result_t<F, Args...>> {
+    return gpuPool_->submit(std::forward<F>(f), std::forward<Args>(args)...);
+  }
 
-  private:
-    friend struct ThreadPoolCleanup;
-    friend void transfer(Device &device, const AllocatedBuffer &src,
-                         vk::DeviceSize srcOffset, AllocatedBuffer &dst,
-                         vk::DeviceSize dstOffset, vk::DeviceSize size);
-    friend void transfer(Device &device, const AllocatedBuffer &src,
-                         vk::DeviceSize bufferOffset, AllocatedImage &dst,
-                         vk::ImageLayout dstFinalLayout);
-    friend void transfer(Device &device, const AllocatedImage &src,
-                         AllocatedBuffer &dst, vk::DeviceSize bufferOffset);
-    friend void transfer(Device &device, const AllocatedImage &src,
-                         AllocatedImage &dst, vk::ImageLayout dstFinalLayout);
+  [[nodiscard]] size_t workerCount() const noexcept { return gpuPool_->size(); }
+
+  void advanceFrameIndex() {
+    ++frameIndex_;
+    vmaSetCurrentFrameIndex(**allocator_, frameIndex_);
+  }
+
+  [[nodiscard]] uint64_t getFrameIndex() const { return frameIndex_; }
+
+private:
+  friend struct ThreadPoolCleanup;
+  friend void transfer(const std::shared_ptr<Device> &device,
+                       const AllocatedBuffer &src, vk::DeviceSize srcOffset,
+                       AllocatedBuffer &dst, vk::DeviceSize dstOffset,
+                       vk::DeviceSize size);
+  friend void transfer(const std::shared_ptr<Device> &device,
+                       const AllocatedBuffer &src, vk::DeviceSize bufferOffset,
+                       AllocatedImage &dst, vk::ImageLayout dstFinalLayout);
+  friend void transfer(const std::shared_ptr<Device> &device,
+                       const AllocatedImage &src, AllocatedBuffer &dst,
+                       vk::DeviceSize bufferOffset);
+  friend void transfer(const std::shared_ptr<Device> &device,
+                       const AllocatedImage &src, AllocatedImage &dst,
+                       vk::ImageLayout dstFinalLayout);
 };
 
 template <std::invocable<vk::CommandBuffer> F>
 void Device::submitOneShot(vk::Queue queue, uint32_t queueFamily,
                            F &&recordFn) {
-    const CommandPoolCreateInfo createInfo{.queueFamily = queueFamily};
-    CommandBufferPool pool{device_, createInfo};
-    pool.allocate(1);
-    auto &cmd = pool.buffers.front();
-    cmd.begin(vk::CommandBufferBeginInfo{
-        vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-    std::forward<F>(recordFn)(*cmd);
-    cmd.end();
+  const CommandPoolCreateInfo createInfo{.queueFamily = queueFamily};
+  CommandBufferPool pool{device_, createInfo};
+  pool.allocate(1);
+  auto &cmd = pool.buffers.front();
+  cmd.begin(vk::CommandBufferBeginInfo{
+      vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+  std::forward<F>(recordFn)(*cmd);
+  cmd.end();
 
-    vk::SubmitInfo submit;
-    submit.setCommandBuffers(*cmd);
-    vk::raii::Fence fence{*device_, vk::FenceCreateInfo{}};
-    queue.submit(submit, *fence);
-    auto result = device_->waitForFences(
-        *fence, vk::True, std::numeric_limits<std::uint64_t>::max());
-    if (result != vk::Result::eSuccess) {
-        throw std::runtime_error("Transfer submission failed");
-    }
+  vk::SubmitInfo submit;
+  submit.setCommandBuffers(*cmd);
+  vk::raii::Fence fence{*device_, vk::FenceCreateInfo{}};
+  queue.submit(submit, *fence);
+  auto result = device_->waitForFences(
+      *fence, vk::True, std::numeric_limits<std::uint64_t>::max());
+  if (result != vk::Result::eSuccess) {
+    throw std::runtime_error("Transfer submission failed");
+  }
 }
 
 } // namespace graphics::vulkan::devices

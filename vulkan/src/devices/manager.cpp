@@ -2,6 +2,7 @@ module;
 
 module graphics.vulkan.devices;
 
+import std.compat;
 import vulkan;
 
 namespace graphics::vulkan::devices {
@@ -203,9 +204,7 @@ Manager::Manager(const std::shared_ptr<vk::raii::Instance> &instance,
 }
 
 Manager::~Manager() {
-
   deviceEntries_.clear();
-
   instance_.reset();
 
   std::cout << "[Manager] Cleared\n";

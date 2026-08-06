@@ -13,15 +13,15 @@ namespace graphics::vulkan::devices {
 namespace {
 
 // Helper: pick a queue from the device – prefer transfer, then graphics
-vk::Queue selectQueue(Device &device, uint32_t &family) {
-  const auto &qfi = device.getQueueFamilies();
+vk::Queue selectQueue(const std::shared_ptr<Device> &device, uint32_t &family) {
+  const auto &qfi = device->getQueueFamilies();
   if (qfi.hasTransfer()) {
     family = qfi.transferQueue.value();
-    return device.getTransferQueue();
+    return device->getTransferQueue();
   }
   if (qfi.hasGraphics()) {
     family = qfi.graphicsQueue.value();
-    return device.getGraphicsQueue();
+    return device->getGraphicsQueue();
   }
   throw std::runtime_error("Device has no transfer or graphics queue");
 }
@@ -52,13 +52,15 @@ void pipelineBarrier(vk::CommandBuffer cmd, vk::Image image,
   cmd.pipelineBarrier2(depInfo);
 }
 
-AllocatedBuffer createStagingBuffer(Device &device, vk::DeviceSize size) {
+AllocatedBuffer createStagingBuffer(const std::shared_ptr<Device> &device,
+                                    vk::DeviceSize size) {
   BufferCreateInfo info{.size = size,
                         .usage = vk::BufferUsageFlagBits::eTransferSrc |
                                  vk::BufferUsageFlagBits::eTransferDst,
                         .access = BufferCreateInfo::Access::stagingUpload,
+                        .flags = {},
                         .debugName = "staging"};
-  return device.createBuffer(info);
+  return device->createBuffer(info);
 }
 
 vk::ImageAspectFlags aspectFromFormat(vk::Format fmt) {
@@ -193,12 +195,12 @@ vk::DeviceSize imageDataSize(vk::Format format, vk::Extent3D extent) {
 
 // ===================== intra‑device implementations =====================
 
-void transfer(Device &device, const AllocatedBuffer &src,
+void transfer(const std::shared_ptr<Device> &device, const AllocatedBuffer &src,
               vk::DeviceSize srcOffset, AllocatedBuffer &dst,
               vk::DeviceSize dstOffset, vk::DeviceSize size) {
   uint32_t family = 0;
   auto queue = selectQueue(device, family);
-  device.submitOneShot(
+  device->submitOneShot(
       queue, family,
       [&srcOffset, &dstOffset, &size, &src, &dst](vk::CommandBuffer cmd) {
         vk::BufferCopy region{srcOffset, dstOffset, size};
@@ -206,14 +208,14 @@ void transfer(Device &device, const AllocatedBuffer &src,
       });
 }
 
-void transfer(Device &device, const AllocatedBuffer &src,
+void transfer(const std::shared_ptr<Device> &device, const AllocatedBuffer &src,
               vk::DeviceSize bufferOffset, AllocatedImage &dst,
               vk::ImageLayout dstFinalLayout) {
   uint32_t family = 0;
   auto queue = selectQueue(device, family);
   const auto aspect = aspectFromFormat(dst.format);
   const auto srcLayout = dst.currentLayout;
-  device.submitOneShot(
+  device->submitOneShot(
       queue, family,
       [&src, &dst, &bufferOffset, &dstFinalLayout, &aspect,
        srcLayout](vk::CommandBuffer cmd) {
@@ -242,13 +244,13 @@ void transfer(Device &device, const AllocatedBuffer &src,
   dst.currentLayout = dstFinalLayout;
 }
 
-void transfer(Device &device, const AllocatedImage &src, AllocatedBuffer &dst,
-              vk::DeviceSize bufferOffset) {
+void transfer(const std::shared_ptr<Device> &device, const AllocatedImage &src,
+              AllocatedBuffer &dst, vk::DeviceSize bufferOffset) {
   uint32_t family = 0;
   auto queue = selectQueue(device, family);
   const auto aspect = aspectFromFormat(src.format);
   const auto srcLayout = src.currentLayout;
-  device.submitOneShot(
+  device->submitOneShot(
       queue, family,
       [&src, &dst, &bufferOffset, &aspect, srcLayout](vk::CommandBuffer cmd) {
         vk::ImageSubresourceRange subresource{aspect, 0, 1, 0, 1};
@@ -276,15 +278,15 @@ void transfer(Device &device, const AllocatedImage &src, AllocatedBuffer &dst,
       });
 }
 
-void transfer(Device &device, const AllocatedImage &src, AllocatedImage &dst,
-              vk::ImageLayout dstFinalLayout) {
+void transfer(const std::shared_ptr<Device> &device, const AllocatedImage &src,
+              AllocatedImage &dst, vk::ImageLayout dstFinalLayout) {
   uint32_t family = 0;
   auto queue = selectQueue(device, family);
   const auto srcAspect = aspectFromFormat(src.format);
   const auto dstAspect = aspectFromFormat(dst.format);
   const auto srcLayout = src.currentLayout;
   const auto dstLayout = dst.currentLayout;
-  device.submitOneShot(
+  device->submitOneShot(
       queue, family,
       [&src, &dst, srcLayout, dstLayout, &dstFinalLayout, &srcAspect,
        &dstAspect](vk::CommandBuffer cmd) {
@@ -491,8 +493,9 @@ void recordTransfer(vk::CommandBuffer cmd, vk::Image swapchainImage,
 // then a memcpy to a staging buffer on the destination device, and finally
 // a intra‑device copy to the target resource.
 
-void transfer(Device &srcDevice, const AllocatedBuffer &src,
-              vk::DeviceSize srcOffset, Device &dstDevice, AllocatedBuffer &dst,
+void transfer(const std::shared_ptr<Device> &srcDevice,
+              const AllocatedBuffer &src, vk::DeviceSize srcOffset,
+              const std::shared_ptr<Device> &dstDevice, AllocatedBuffer &dst,
               vk::DeviceSize dstOffset, vk::DeviceSize size) {
   // If we can directly map both buffers (host‑visible), just memcpy.
   // But they might be device‑local, so we stage.
@@ -515,8 +518,9 @@ void transfer(Device &srcDevice, const AllocatedBuffer &src,
   transfer(dstDevice, dstStaging, 0, dst, dstOffset, size);
 }
 
-void transfer(Device &srcDevice, const AllocatedBuffer &src,
-              vk::DeviceSize srcOffset, Device &dstDevice, AllocatedImage &dst,
+void transfer(const std::shared_ptr<Device> &srcDevice,
+              const AllocatedBuffer &src, vk::DeviceSize srcOffset,
+              const std::shared_ptr<Device> &dstDevice, AllocatedImage &dst,
               vk::ImageLayout dstFinalLayout) {
   // Use a staging buffer on the source device
   vk::DeviceSize imageSize = imageDataSize(dst.format, dst.extent);
@@ -527,8 +531,10 @@ void transfer(Device &srcDevice, const AllocatedBuffer &src,
   transfer(dstDevice, staging, 0, dst, dstFinalLayout);
 }
 
-void transfer(Device &srcDevice, const AllocatedImage &src, Device &dstDevice,
-              AllocatedBuffer &dst, vk::DeviceSize dstOffset) {
+void transfer(const std::shared_ptr<Device> &srcDevice,
+              const AllocatedImage &src,
+              const std::shared_ptr<Device> &dstDevice, AllocatedBuffer &dst,
+              vk::DeviceSize dstOffset) {
   vk::DeviceSize imageSize = imageDataSize(src.format, src.extent);
   auto staging = createStagingBuffer(srcDevice, imageSize);
   // intra src device: image -> staging buffer
@@ -537,8 +543,10 @@ void transfer(Device &srcDevice, const AllocatedImage &src, Device &dstDevice,
   transfer(dstDevice, staging, 0, dst, dstOffset, imageSize);
 }
 
-void transfer(Device &srcDevice, const AllocatedImage &src, Device &dstDevice,
-              AllocatedImage &dst, vk::ImageLayout dstFinalLayout) {
+void transfer(const std::shared_ptr<Device> &srcDevice,
+              const AllocatedImage &src,
+              const std::shared_ptr<Device> &dstDevice, AllocatedImage &dst,
+              vk::ImageLayout dstFinalLayout) {
   vk::DeviceSize imageSize = imageDataSize(src.format, src.extent);
   auto staging = createStagingBuffer(srcDevice, imageSize);
   transfer(srcDevice, src, staging, 0);
@@ -547,46 +555,42 @@ void transfer(Device &srcDevice, const AllocatedImage &src, Device &dstDevice,
 
 // ---------- async variants ----------
 
-std::future<void> transferAsync(Device &device,
+std::future<void> transferAsync(std::shared_ptr<Device> device,
                                 std::shared_ptr<AllocatedBuffer> src,
                                 vk::DeviceSize srcOffset,
                                 std::shared_ptr<AllocatedBuffer> dst,
                                 vk::DeviceSize dstOffset, vk::DeviceSize size) {
-  return device.submit([src = std::move(src), srcOffset, dst = std::move(dst),
-                        dstOffset, size, &device]() {
+  return device->submit([&src, srcOffset, &dst, dstOffset, size, &device]() {
     transfer(device, *src, srcOffset, *dst, dstOffset, size);
   });
 }
 
-std::future<void> transferAsync(Device &device,
+std::future<void> transferAsync(std::shared_ptr<Device> device,
                                 std::shared_ptr<AllocatedBuffer> src,
                                 vk::DeviceSize bufferOffset,
                                 std::shared_ptr<AllocatedImage> dst,
                                 vk::ImageLayout dstFinalLayout) {
-  return device.submit([src = std::move(src), bufferOffset,
-                        dst = std::move(dst), dstFinalLayout, &device]() {
+  return device->submit([&src, bufferOffset, &dst, dstFinalLayout, &device]() {
     transfer(device, *src, bufferOffset, *dst, dstFinalLayout);
   });
 }
 
-std::future<void> transferAsync(Device &device,
+std::future<void> transferAsync(std::shared_ptr<Device> device,
                                 std::shared_ptr<AllocatedImage> src,
                                 std::shared_ptr<AllocatedBuffer> dst,
                                 vk::DeviceSize bufferOffset) {
-  return device.submit(
-      [src = std::move(src), dst = std::move(dst), bufferOffset, &device]() {
-        transfer(device, *src, *dst, bufferOffset);
-      });
+  return device->submit([&src, &dst, bufferOffset, &device]() {
+    transfer(device, *src, *dst, bufferOffset);
+  });
 }
 
-std::future<void> transferAsync(Device &device,
+std::future<void> transferAsync(std::shared_ptr<Device> device,
                                 std::shared_ptr<AllocatedImage> src,
                                 std::shared_ptr<AllocatedImage> dst,
                                 vk::ImageLayout dstFinalLayout) {
-  return device.submit(
-      [src = std::move(src), dst = std::move(dst), dstFinalLayout, &device]() {
-        transfer(device, *src, *dst, dstFinalLayout);
-      });
+  return device->submit([&src, &dst, dstFinalLayout, &device]() {
+    transfer(device, *src, *dst, dstFinalLayout);
+  });
 }
 
 std::future<void> transferAsync(std::shared_ptr<Device> srcDevice,
@@ -595,12 +599,10 @@ std::future<void> transferAsync(std::shared_ptr<Device> srcDevice,
                                 std::shared_ptr<Device> dstDevice,
                                 std::shared_ptr<AllocatedBuffer> dst,
                                 vk::DeviceSize dstOffset, vk::DeviceSize size) {
-  return srcDevice->submit([srcDevice = std::move(srcDevice),
-                            src = std::move(src), srcOffset,
-                            dstDevice = std::move(dstDevice),
-                            dst = std::move(dst), dstOffset, size]() {
-    transfer(*srcDevice, *src, srcOffset, *dstDevice, *dst, dstOffset, size);
-  });
+  return srcDevice->submit(
+      [&srcDevice, &src, srcOffset, &dstDevice, &dst, dstOffset, size]() {
+        transfer(srcDevice, *src, srcOffset, dstDevice, *dst, dstOffset, size);
+      });
 }
 
 std::future<void> transferAsync(std::shared_ptr<Device> srcDevice,
@@ -609,12 +611,10 @@ std::future<void> transferAsync(std::shared_ptr<Device> srcDevice,
                                 std::shared_ptr<Device> dstDevice,
                                 std::shared_ptr<AllocatedImage> dst,
                                 vk::ImageLayout dstFinalLayout) {
-  return srcDevice->submit([srcDevice = std::move(srcDevice),
-                            src = std::move(src), srcOffset,
-                            dstDevice = std::move(dstDevice),
-                            dst = std::move(dst), dstFinalLayout]() {
-    transfer(*srcDevice, *src, srcOffset, *dstDevice, *dst, dstFinalLayout);
-  });
+  return srcDevice->submit(
+      [&srcDevice, &src, srcOffset, &dstDevice, &dst, dstFinalLayout]() {
+        transfer(srcDevice, *src, srcOffset, dstDevice, *dst, dstFinalLayout);
+      });
 }
 
 std::future<void> transferAsync(std::shared_ptr<Device> srcDevice,
@@ -622,11 +622,9 @@ std::future<void> transferAsync(std::shared_ptr<Device> srcDevice,
                                 std::shared_ptr<Device> dstDevice,
                                 std::shared_ptr<AllocatedBuffer> dst,
                                 vk::DeviceSize dstOffset) {
-  return srcDevice->submit(
-      [srcDevice = std::move(srcDevice), src = std::move(src),
-       dstDevice = std::move(dstDevice), dst = std::move(dst), dstOffset]() {
-        transfer(*srcDevice, *src, *dstDevice, *dst, dstOffset);
-      });
+  return srcDevice->submit([&srcDevice, &src, &dstDevice, &dst, dstOffset]() {
+    transfer(srcDevice, *src, dstDevice, *dst, dstOffset);
+  });
 }
 
 std::future<void> transferAsync(std::shared_ptr<Device> srcDevice,
@@ -634,12 +632,10 @@ std::future<void> transferAsync(std::shared_ptr<Device> srcDevice,
                                 std::shared_ptr<Device> dstDevice,
                                 std::shared_ptr<AllocatedImage> dst,
                                 vk::ImageLayout dstFinalLayout) {
-  return srcDevice->submit([srcDevice = std::move(srcDevice),
-                            src = std::move(src),
-                            dstDevice = std::move(dstDevice),
-                            dst = std::move(dst), dstFinalLayout]() {
-    transfer(*srcDevice, *src, *dstDevice, *dst, dstFinalLayout);
-  });
+  return srcDevice->submit(
+      [&srcDevice, &src, &dstDevice, &dst, dstFinalLayout]() {
+        transfer(srcDevice, *src, dstDevice, *dst, dstFinalLayout);
+      });
 }
 
 } // namespace graphics::vulkan::devices

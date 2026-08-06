@@ -24,6 +24,7 @@ Backend::Backend(const std::shared_ptr<concurrency::pool::Manager> &poolManager)
 }
 
 Backend::~Backend() {
+  currentFrame_ = RenderContext{};
   frameCmdPools_.clear();
   pipelineManager_.reset();
   shaderManager_.reset();

@@ -70,6 +70,8 @@ private:
   std::shared_ptr<vk::raii::Device> device_;
   std::weak_ptr<WindowInfo> windowInfo_;
 
+  Device *owner_;
+
   std::unique_ptr<vk::raii::SwapchainKHR> swapchain_;
 
   SwapchainInfo info_;
@@ -96,7 +98,8 @@ private:
   [[nodiscard]] std::expected<void, vk::Result> waitForFrameFence();
 
 public:
-  Swapchain(const std::shared_ptr<vk::raii::PhysicalDevice> &physicalDevice,
+  Swapchain(Device *owner,
+            const std::shared_ptr<vk::raii::PhysicalDevice> &physicalDevice,
             const std::shared_ptr<vk::raii::Device> &device,
             const std::shared_ptr<WindowInfo> &windowInfo, SwapchainInfo info,
             uint32_t framesInFlight, vk::Queue presentQueue,

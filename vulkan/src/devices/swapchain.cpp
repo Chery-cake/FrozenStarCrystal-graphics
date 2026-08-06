@@ -76,14 +76,15 @@ vk::Extent2D chooseExtent(const vk::SurfaceCapabilitiesKHR &capabilities,
 } // namespace
 
 Swapchain::Swapchain(
+    Device *owner,
     const std::shared_ptr<vk::raii::PhysicalDevice> &physicalDevice,
     const std::shared_ptr<vk::raii::Device> &device,
     const std::shared_ptr<WindowInfo> &windowInfo, SwapchainInfo info,
     uint32_t framesInFlight, vk::Queue presentQueue,
     uint32_t presentQueueFamily)
     : physicalDevice_(physicalDevice), device_(device), windowInfo_(windowInfo),
-      info_(info), framesInFlight_(framesInFlight), presentQueue_(presentQueue),
-      presentQueueFamily_(presentQueueFamily) {
+      owner_(owner), info_(info), framesInFlight_(framesInFlight),
+      presentQueue_(presentQueue), presentQueueFamily_(presentQueueFamily) {
   std::unique_lock lock(mtx_);
 
   auto capabilities =
@@ -194,6 +195,8 @@ Swapchain::~Swapchain() {
   // 2. Now it's safe to tear down the swapchain and device
   swapchain_.reset();
 
+  owner_ = nullptr;
+
   windowInfo_.reset();
   device_.reset();
   physicalDevice_.reset();
@@ -262,7 +265,7 @@ bool Swapchain::recreateSwapchain(uint32_t newWidth, uint32_t newHeight) {
   renderFinishedSemaphores_.clear();
   renderFinishedSemaphores_.reserve(info_.imageCount);
   std::ranges::for_each(
-      std::views::iota(info_.imageCount),
+      std::views::iota(0U, info_.imageCount),
       [&renders = renderFinishedSemaphores_, &device = device_](uint32_t) {
         renders.emplace_back(*device, vk::SemaphoreCreateInfo{});
       });
@@ -441,6 +444,8 @@ std::expected<vk::Result, Swapchain::PresentError> Swapchain::submitAndPresent(
     needRecreation_.store(true, std::memory_order_release);
   }
 
+  owner_->advanceFrameIndex();
+
   return result;
 }
 
@@ -474,6 +479,8 @@ vk::Result Swapchain::submitAndWait(vk::Queue queue,
   if (result == vk::Result::eSuccess) {
     device_->resetFences(*waitFences_[wait]);
   }
+
+  owner_->advanceFrameIndex();
 
   return result;
 }

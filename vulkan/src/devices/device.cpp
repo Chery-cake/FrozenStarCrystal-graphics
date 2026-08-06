@@ -1,6 +1,7 @@
 module;
 
 #include <cstdint>
+#include <vk_mem_alloc.h>
 
 module graphics.vulkan.devices;
 
@@ -212,11 +213,15 @@ Device::Device(const vk::raii::Instance &instance,
   allocatorInfo.device = nullptr; // must be null
 
   // Use dynamic function dispatch
-  allocatorInfo.flags = vma::AllocatorCreateFlagBits::eExtMemoryBudget;
+  allocatorInfo.flags = vma::AllocatorCreateFlagBits::eExtMemoryBudget |
+                        vma::AllocatorCreateFlagBits::eExternallySynchronized;
   allocatorInfo.pVulkanFunctions = nullptr; // must be null
 
   allocator_ = std::make_unique<vma::raii::Allocator>(
       vma::raii::createAllocator(instance, *device_, allocatorInfo));
+
+  // Initialize VMA frame index before any allocations
+  vmaSetCurrentFrameIndex(**allocator_, 0);
 
   std::println("[Device] Initialized: {}", info.name);
 }
@@ -318,8 +323,8 @@ void Device::createWindow(const std::shared_ptr<WindowInfo> &windowInfo,
 
   std::unique_lock lock(windowMtx_);
   windowInfo->swapchain = std::make_unique<Swapchain>(
-      physicalDevice_, device_, windowInfo, swapInfo, framesInFlight, present,
-      presentFamily.value());
+      this, physicalDevice_, device_, windowInfo, swapInfo, framesInFlight,
+      present, presentFamily.value());
 
   windows_.push_back(windowInfo);
 }
@@ -353,8 +358,8 @@ void Device::createWindow(const std::shared_ptr<WindowInfo> &windowInfo,
   Swapchain::SwapchainInfo swapInfo;
 
   windowInfo->swapchain = std::make_unique<Swapchain>(
-      physicalDevice_, device_, windowInfo, swapInfo, framesInFlight, present,
-      presentFamily.value());
+      this, physicalDevice_, device_, windowInfo, swapInfo, framesInFlight,
+      present, presentFamily.value());
 
   windows_.push_back(windowInfo);
 }
@@ -575,7 +580,5 @@ void Device::removeThreadPools(std::thread::id tid) {
   protectedPools_.erase(tid);
   touchedThreads_.erase(tid);
 }
-
-size_t Device::workerCount() const noexcept { return gpuPool_->size(); }
 
 } // namespace graphics::vulkan::devices
