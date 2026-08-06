@@ -10,17 +10,23 @@ namespace graphics::vulkan {
 
 Backend::Backend(const std::shared_ptr<concurrency::pool::Manager> &poolManager)
     : poolManager_(poolManager) {
+  bool created = poolManager_->createPool(&gpuPoolDesc);
   gpuPool_ = poolManager_->getPool(&gpuPoolDesc).lock();
 
   instance_ = std::make_unique<vulkan::instances::Instance>();
   deviceManager_ = std::make_unique<vulkan::devices::Manager>(
       instance_->getInstancePtr(), gpuPool_);
   shaderManager_ = std::make_unique<vulkan::shaders::Manager>();
-  // Use a no-op deleter shared_ptr: pipelineManager_ is always destroyed
-  // before shaderManager_ (shutdown() / destructor ordering guarantees this).
   pipelineManager_ = std::make_unique<vulkan::pipelines::Manager>(
       std::shared_ptr<vulkan::shaders::Manager>(shaderManager_.get(),
                                                 [](auto *) {}));
+
+  if (created) {
+    poolManager_->resizePool(&gpuPoolDesc,
+                             deviceManager_->getDeviceEntries().size());
+  }
+  std::println("[Backend] Initialized - GPU thread pool have {} workers",
+               gpuPool_->size());
 }
 
 Backend::~Backend() {

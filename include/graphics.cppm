@@ -14,7 +14,8 @@ export import graphics.vulkan;
 export namespace graphics {
 
 #if defined(GRAPHICS_BACKEND_VULKAN)
-using GraphicsBackend = vulkan::Backend;
+using namespace vulkan;
+using GraphicsBackend = Backend;
 #else
 #error "No graphics backend selected"
 #endif
@@ -22,5 +23,4 @@ using GraphicsBackend = vulkan::Backend;
 static_assert(
     ApiCheck<GraphicsBackend>,
     "The selected backend doesn't support all the minimun requirements");
-
 } // namespace graphics

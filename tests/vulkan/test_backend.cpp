@@ -683,7 +683,6 @@ int main() {
     // ── 2. Pool + Backend setup
     // ───────────────────────────────────────────
     auto poolManager = std::make_shared<concurrency::pool::Manager>();
-    poolManager->createPool(&gpuPoolDesc, 2);
 
     graphics::GraphicsBackend backend{poolManager};
 
