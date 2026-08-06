@@ -164,7 +164,7 @@
               -DBUILD_SHARED_LIBS="$BUILD_SHARED_LIBS" \
               -DWARNINGS_LEVEL="$WARNINGS_LEVEL" \
               -DTREAT_WARNINGS_AS_ERRORS="$TREAT_WARNINGS_AS_ERRORS" \
-              -DUSING_API="$API" \
+              -DGRAPHICS_API="$API" \
               -DCMAKE_CXX_FLAGS="$CXXFLAGS" \
               -DCMAKE_C_FLAGS="$CFLAGS" \
               -DCMAKE_CXX_COMPILER_AR="${llvmTools}/bin/llvm-ar" \

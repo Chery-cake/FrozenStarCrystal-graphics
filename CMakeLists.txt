@@ -105,14 +105,19 @@ add_subdirectory(lib)
 # ==============================================================================
 # Main Application
 # ==============================================================================
-option(USING_API "Select the graphic api to use (vulkan|opengl)" "vulkan")
+
+if(DEFINED $ENV{GRAPHICS_API})
+    set(GRAPHICS_API "$ENV{GRAPHICS_API}" CACHE STRING "Select the graphic api to use (vulkan|opengl)" FORCE)
+else()
+    set(GRAPHICS_API "vulkan" CACHE STRING "Select the graphic api to use (vulkan|opengl)")
+endif()
 
 file(GLOB_RECURSE PRIVATE_FILES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.c*"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h*"
 
-    "${CMAKE_CURRENT_SOURCE_DIR}/${USING_API}/src/*.c*"
-    "${CMAKE_CURRENT_SOURCE_DIR}/${USING_API}/src/*.h*"
+    "${CMAKE_CURRENT_SOURCE_DIR}/${GRAPHICS_API}/src/*.c*"
+    "${CMAKE_CURRENT_SOURCE_DIR}/${GRAPHICS_API}/src/*.h*"
 )
 list(FILTER PRIVATE_FILES EXCLUDE REGEX "\\.(cppm|cc)$")
 
@@ -120,8 +125,8 @@ file(GLOB_RECURSE PUBLIC_FILES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/include/*.c*"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/*.h*"
 
-    "${CMAKE_CURRENT_SOURCE_DIR}/${USING_API}/include/*.c*"
-    "${CMAKE_CURRENT_SOURCE_DIR}/${USING_API}/include/*.h*"
+    "${CMAKE_CURRENT_SOURCE_DIR}/${GRAPHICS_API}/include/*.c*"
+    "${CMAKE_CURRENT_SOURCE_DIR}/${GRAPHICS_API}/include/*.h*"
 )
 list(FILTER PUBLIC_FILES EXCLUDE REGEX "\\.(cppm|cc)$")
 
@@ -129,8 +134,8 @@ file(GLOB_RECURSE MODULES_FILES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cc"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/*.cppm"
 
-    "${CMAKE_CURRENT_SOURCE_DIR}/${USING_API}/src/*.cc"
-    "${CMAKE_CURRENT_SOURCE_DIR}/${USING_API}/include/*.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/${GRAPHICS_API}/src/*.cc"
+    "${CMAKE_CURRENT_SOURCE_DIR}/${GRAPHICS_API}/include/*.cppm"
 )
 
 add_library(${PROJECT_NAME})
@@ -191,11 +196,11 @@ target_compile_definitions(${PROJECT_NAME} PUBLIC
     APP_VERSION_PATCH=${APP_VERSION_PATCH}
 )
 
-if(USING_API STREQUAL "vulkan")
+if(GRAPHICS_API STREQUAL "vulkan")
     target_compile_definitions(${PROJECT_NAME} PUBLIC GRAPHICS_BACKEND_VULKAN=1)
     target_link_libraries(${PROJECT_NAME} PUBLIC vk vma slang)
 else()
-    message(FATAL_ERROR "Unsupported USING_API: ${USING_API}")
+    message(FATAL_ERROR "Unsupported GRAPHICS_API: ${GRAPHICS_API}")
 endif()
 
 target_create_export(${PROJECT_NAME} MODULES ${MODULES_FILES})
