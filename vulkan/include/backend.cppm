@@ -96,8 +96,6 @@ public:
   static void addRequiredExtensions(std::span<const char *const> extensions);
 
   // Register a GLFW (or other) surface as a window.
-  // Must be called after initialize() and before the first beginFrame().
-  // framesInFlight defaults to 2.
   void createWindow(const std::shared_ptr<devices::WindowInfo> &windowInfo,
                     uint32_t framesInFlight, vk::Extent2D extent);
   void createWindow(const std::shared_ptr<devices::Device> &device,
@@ -133,6 +131,14 @@ public:
   }
   [[nodiscard]] const pipelines::Manager &getPipelineManager() const {
     return *pipelineManager_;
+  }
+
+  [[nodiscard]] std::shared_ptr<devices::Device> getFirstDevice() {
+    auto entries = deviceManager_->getDeviceEntries();
+    if (entries.empty()) {
+      return nullptr;
+    }
+    return entries.front().device;
   }
 };
 

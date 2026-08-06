@@ -46,7 +46,7 @@ public:
   Compiler &operator=(Compiler &&) = delete;
 
   std::expected<std::string, CompilerError> compile(const Shader &shader);
-  std::string getBinary(const Shader &shader);
+  std::string getBinary(const Shader &shader, bool forceRecompile = false);
   bool askRecompile(const Shader &shader);
 
   void addPath(const std::filesystem::path &path) {

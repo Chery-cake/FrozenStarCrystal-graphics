@@ -238,9 +238,9 @@ Compiler::compile(const Shader &shader) {
     std::error_code ec;
     std::filesystem::create_directories(outDir, ec);
     if (ec) {
-      return std::unexpected<CompilerError>({
-          .code = CompilerError::Code::fileNotFound,
-          .message = "Could not create output directory: " + outDir.string()});
+      return std::unexpected<CompilerError>(
+          {.code = CompilerError::Code::fileNotFound,
+           .message = "Could not create output directory: " + outDir.string()});
     }
 
     // Output file: same stem, .spv extension
@@ -250,9 +250,9 @@ Compiler::compile(const Shader &shader) {
 
     std::ofstream outFile(outPath, std::ios::binary);
     if (!outFile) {
-      return std::unexpected<CompilerError>({
-          .code = CompilerError::Code::fileNotFound,
-          .message = "Could not open output file: " + outPath.string()});
+      return std::unexpected<CompilerError>(
+          {.code = CompilerError::Code::fileNotFound,
+           .message = "Could not open output file: " + outPath.string()});
     }
 
     outFile.write(static_cast<const char *>(codeBlob->getBufferPointer()),
@@ -261,18 +261,36 @@ Compiler::compile(const Shader &shader) {
 
     return outPath.string();
   } catch (const std::exception &e) {
-    return std::unexpected<CompilerError>({.code = CompilerError::Code::unexpectedError,
-                      .message = std::string("Exception: ") + e.what()});
+    return std::unexpected<CompilerError>(
+        {.code = CompilerError::Code::unexpectedError,
+         .message = std::string("Exception: ") + e.what()});
   } catch (...) {
-    return std::unexpected<CompilerError>({.code = CompilerError::Code::unexpectedError,
-                      .message = "Unknown exception during compilation"});
+    return std::unexpected<CompilerError>(
+        {.code = CompilerError::Code::unexpectedError,
+         .message = "Unknown exception during compilation"});
   }
 }
 
-std::string Compiler::getBinary(const Shader &shader) {
+std::string Compiler::getBinary(const Shader &shader, bool forceRecompile) {
 
-  std::filesystem::path compDir =
-      std::filesystem::path(shader.sourcePath).parent_path() / "compiled";
+  // Resolve the source file against includePaths_, the same way compile()
+  // does.
+  std::filesystem::path sourceFile = shader.sourcePath;
+  {
+    std::unique_lock lock(mtx_);
+    if (!std::filesystem::exists(sourceFile)) {
+      auto it =
+          std::ranges::find_if(includePaths_, [&sourceFile](const auto &p) {
+            return std::filesystem::exists(p / sourceFile);
+          });
+      if (it != includePaths_.end()) {
+        sourceFile = *it / sourceFile;
+      }
+    }
+    sourceFile = sourceFile.lexically_normal();
+  }
+
+  std::filesystem::path compDir = sourceFile.parent_path() / "compiled";
   std::filesystem::path file =
       compDir / std::filesystem::path(shader.sourcePath).filename();
   file.replace_extension(".spv");
@@ -280,8 +298,11 @@ std::string Compiler::getBinary(const Shader &shader) {
   {
     std::unique_lock lock(mtx_);
 
-    if (std::filesystem::exists(file)) {
+    if (forceRecompile) {
+      std::filesystem::remove(file);
+    }
 
+    if (std::filesystem::exists(file)) {
       return file.string();
     }
   }
@@ -295,21 +316,36 @@ std::string Compiler::getBinary(const Shader &shader) {
 }
 
 bool Compiler::askRecompile(const Shader &shader) {
-  std::unique_lock lock(mtx_);
+  // Resolve source path the same way compile() does.
+  std::filesystem::path sourceFile = shader.sourcePath;
+  {
+    std::unique_lock lock(mtx_);
+    if (!std::filesystem::exists(sourceFile)) {
+      auto it =
+          std::ranges::find_if(includePaths_, [&sourceFile](const auto &p) {
+            return std::filesystem::exists(p / sourceFile);
+          });
+      if (it != includePaths_.end()) {
+        sourceFile = *it / sourceFile;
+      }
+    }
+    sourceFile = sourceFile.lexically_normal();
+  }
 
-  std::filesystem::path compDir =
-      std::filesystem::path(shader.sourcePath).parent_path() / "compiled";
+  std::filesystem::path compDir = sourceFile.parent_path() / "compiled";
   std::filesystem::path file =
       compDir / std::filesystem::path(shader.sourcePath).filename();
   file.replace_extension(".spv");
 
   std::filesystem::remove(file);
 
-  if (!std::filesystem::exists(file)) {
-    auto comp = compile(shader);
-    return comp.has_value();
+  {
+    std::unique_lock lock(mtx_);
+    std::filesystem::remove(file);
   }
-  return false;
+
+  auto comp = compile(shader);
+  return comp.has_value();
 }
 
 void Compiler::clearPaths() {
