@@ -50,7 +50,16 @@ Manager::buildDynamic(const DynamicPipelineInfo &info,
   std::ranges::for_each(
       shaderDef->entryPoints | std::views::filter([](const auto &ep) {
         return ep.type != vk::ShaderStageFlagBits::eCompute;
-      }),
+      }) |
+          std::views::filter(
+              [&overrides = info.entryPointOverrides](const auto &ep) {
+                if (overrides.empty()) {
+                  return true;
+                }
+                return std::ranges::find_if(overrides, [&ep](const auto &pair) {
+                         return pair.first == ep.type;
+                       }) != overrides.end();
+              }),
       [&stages, &shaderModule, &info](const auto &ep) {
         vk::PipelineShaderStageCreateInfo stageInfo{};
         stageInfo.setStage(ep.type)
@@ -180,7 +189,16 @@ Manager::buildStatic(const StaticPipelineInfo &info,
   std::ranges::for_each(
       shaderDef->entryPoints | std::views::filter([](const auto &ep) {
         return ep.type != vk::ShaderStageFlagBits::eCompute;
-      }),
+      }) |
+          std::views::filter(
+              [&overrides = info.entryPointOverrides](const auto &ep) {
+                if (overrides.empty()) {
+                  return true;
+                }
+                return std::ranges::find_if(overrides, [&ep](const auto &pair) {
+                         return pair.first == ep.type;
+                       }) != overrides.end();
+              }),
       [&stages, &shaderModule, &info](const auto &ep) {
         vk::PipelineShaderStageCreateInfo stageInfo{};
         stageInfo.setStage(ep.type)
@@ -298,6 +316,40 @@ Manager::buildCompute(const ComputePipelineInfo &info,
         PipelineError{.code = PipelineError::Code::creationFailed,
                       .message = "No compute entry point in shader"});
   }
+
+  // 2. Shader stages
+  std::vector<vk::PipelineShaderStageCreateInfo> stages;
+
+  std::ranges::for_each(
+      shaderDef->entryPoints | std::views::filter([](const auto &ep) {
+        return ep.type == vk::ShaderStageFlagBits::eCompute;
+      }) |
+          std::views::filter(
+              [& override = info.entryPointOverride](const auto &ep) {
+                if (override.empty()) {
+                  return true;
+                }
+                return override == ep.entry;
+              }),
+      [&stages, &shaderModule, &info](const auto &ep) {
+        vk::PipelineShaderStageCreateInfo stageInfo{};
+        stageInfo.setStage(ep.type)
+            .setModule(*shaderModule)
+            .setPName(ep.entry.c_str());
+
+        vk::SpecializationInfo specInfo;
+        if (info.stageSpecialization.stage ==
+                vk::ShaderStageFlagBits::eCompute &&
+            !info.stageSpecialization.entries.empty()) {
+          specInfo.setMapEntries(info.stageSpecialization.entries)
+              .setDataSize(info.stageSpecialization.data.size() *
+                           sizeof(uint32_t))
+              .setPData(info.stageSpecialization.data.data());
+          stageInfo.setPSpecializationInfo(&specInfo);
+        }
+
+        stages.push_back(stageInfo);
+      });
 
   vk::PipelineShaderStageCreateInfo stage;
   stage.setStage(vk::ShaderStageFlagBits::eCompute)

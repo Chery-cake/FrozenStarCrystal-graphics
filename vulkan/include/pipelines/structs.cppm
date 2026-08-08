@@ -84,6 +84,10 @@ struct FROZENSTARCRYSTAL_GRAPHICS_API StageSpecialization {
 struct FROZENSTARCRYSTAL_GRAPHICS_API DynamicPipelineInfo {
   DynamicPipeline tag;
 
+  // Override entry point names per stage. If a stage is missing,
+  // the shader's own entry name is used
+  std::unordered_map<vk::ShaderStageFlagBits, std::string> entryPointOverrides;
+
   InputAssemblyState inputAssembly{};
   RasterizationState rasterization{};
   DepthStencilState depthStencil{};
@@ -110,6 +114,10 @@ struct FROZENSTARCRYSTAL_GRAPHICS_API DynamicPipelineInfo {
 
 struct FROZENSTARCRYSTAL_GRAPHICS_API StaticPipelineInfo {
   StaticPipeline tag;
+
+  // Override entry point names per stage. If a stage is missing,
+  // the shader's own entry name is used
+  std::unordered_map<vk::ShaderStageFlagBits, std::string> entryPointOverrides;
 
   // Vertex input
   std::vector<vk::VertexInputBindingDescription> vertexBindings;
@@ -139,6 +147,8 @@ struct FROZENSTARCRYSTAL_GRAPHICS_API StaticPipelineInfo {
 
 struct FROZENSTARCRYSTAL_GRAPHICS_API ComputePipelineInfo {
   ComputePipeline tag;
+
+  std::string entryPointOverride;
 
   StageSpecialization stageSpecialization;
 
@@ -192,6 +202,11 @@ template <> struct hash<graphics::vulkan::pipelines::DynamicPipelineInfo> {
       const noexcept {
     size_t seed =
         std::hash<graphics::vulkan::pipelines::DynamicPipeline>{}(k.tag);
+
+    for (const auto &[stage, name] : k.entryPointOverrides) {
+      mix(seed, std::hash<uint32_t>{}(static_cast<uint32_t>(stage)));
+      mix(seed, std::hash<std::string>{}(name));
+    }
 
     mix(seed,
         std::hash<uint32_t>{}(static_cast<uint32_t>(k.inputAssembly.topology)));
@@ -281,6 +296,7 @@ template <> struct hash<graphics::vulkan::pipelines::StaticPipelineInfo> {
     dynamicEquivalent.tag.shaderTag = k.tag.shaderTag;
     dynamicEquivalent.tag.layout = k.tag.layout;
     dynamicEquivalent.tag.flags = k.tag.flags;
+    dynamicEquivalent.entryPointOverrides = k.entryPointOverrides;
     dynamicEquivalent.inputAssembly = k.inputAssembly;
     dynamicEquivalent.rasterization = k.rasterization;
     dynamicEquivalent.depthStencil = k.depthStencil;
@@ -312,6 +328,8 @@ template <> struct hash<graphics::vulkan::pipelines::ComputePipelineInfo> {
     auto mix = [&seed](size_t h) {
       seed ^= h + golden + (seed << ml) + (seed >> mr);
     };
+
+    mix(std::hash<std::string>{}(k.entryPointOverride));
 
     // Hash stage
     mix(std::hash<uint32_t>{}(
