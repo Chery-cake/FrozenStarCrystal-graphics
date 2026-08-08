@@ -113,6 +113,21 @@ public:
   // Hot-reload: recompile a shader and invalidate dependent pipelines.
   void reloadShader(const shaders::Shader *tag);
 
+  [[nodiscard]] std::expected<std::shared_ptr<vk::raii::Pipeline>,
+                              pipelines::PipelineError>
+  createPipeline(const pipelines::DynamicPipelineInfo &info,
+                 const std::shared_ptr<devices::Device> &device = nullptr);
+
+  [[nodiscard]] std::expected<std::shared_ptr<vk::raii::Pipeline>,
+                              pipelines::PipelineError>
+  createPipeline(const pipelines::StaticPipelineInfo &info,
+                 const std::shared_ptr<devices::Device> &device = nullptr);
+
+  [[nodiscard]] std::expected<std::shared_ptr<vk::raii::Pipeline>,
+                              pipelines::PipelineError>
+  createPipeline(const pipelines::ComputePipelineInfo &info,
+                 const std::shared_ptr<devices::Device> &device = nullptr);
+
   // ── Accessors ──────────────────────────────────────────────────────────
   [[nodiscard]] instances::Instance &getInstance() { return *instance_; }
   [[nodiscard]] const instances::Instance &getInstance() const {

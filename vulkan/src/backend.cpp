@@ -288,4 +288,40 @@ void Backend::reloadShader(const vulkan::shaders::Shader *tag) {
   pipelineManager_->invalidateShader(tag);
 }
 
+std::expected<std::shared_ptr<vk::raii::Pipeline>, pipelines::PipelineError>
+Backend::createPipeline(const pipelines::DynamicPipelineInfo &info,
+                        const std::shared_ptr<devices::Device> &device) {
+  auto dev = device ? device : getFirstDevice();
+  if (!dev) {
+    return std::unexpected(pipelines::PipelineError{
+        .code = pipelines::PipelineError::Code::creationFailed,
+        .message = "No Vulkan device available"});
+  }
+  return pipelineManager_->getOrCreate(info, dev->getDevicePtr());
+}
+
+std::expected<std::shared_ptr<vk::raii::Pipeline>, pipelines::PipelineError>
+Backend::createPipeline(const pipelines::StaticPipelineInfo &info,
+                        const std::shared_ptr<devices::Device> &device) {
+  auto dev = device ? device : getFirstDevice();
+  if (!dev) {
+    return std::unexpected(pipelines::PipelineError{
+        .code = pipelines::PipelineError::Code::creationFailed,
+        .message = "No Vulkan device available"});
+  }
+  return pipelineManager_->getOrCreate(info, dev->getDevicePtr());
+}
+
+std::expected<std::shared_ptr<vk::raii::Pipeline>, pipelines::PipelineError>
+Backend::createPipeline(const pipelines::ComputePipelineInfo &info,
+                        const std::shared_ptr<devices::Device> &device) {
+  auto dev = device ? device : getFirstDevice();
+  if (!dev) {
+    return std::unexpected(pipelines::PipelineError{
+        .code = pipelines::PipelineError::Code::creationFailed,
+        .message = "No Vulkan device available"});
+  }
+  return pipelineManager_->getOrCreate(info, dev->getDevicePtr());
+}
+
 } // namespace graphics::vulkan

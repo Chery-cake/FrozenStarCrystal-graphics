@@ -47,14 +47,31 @@ Manager::buildDynamic(const DynamicPipelineInfo &info,
   // 2. Build shader stage create infos
   std::vector<vk::PipelineShaderStageCreateInfo> stages;
 
-  std::ranges::for_each(shaderDef->entryPoints,
-                        [&stages, &shaderModule](const auto &ep) {
-                          vk::PipelineShaderStageCreateInfo stageInfo{};
-                          stageInfo.setStage(ep.type)
-                              .setModule(*shaderModule)
-                              .setPName(ep.entry.c_str());
-                          stages.push_back(stageInfo);
-                        });
+  std::ranges::for_each(
+      shaderDef->entryPoints | std::views::filter([](const auto &ep) {
+        return ep.type != vk::ShaderStageFlagBits::eCompute;
+      }),
+      [&stages, &shaderModule, &info](const auto &ep) {
+        vk::PipelineShaderStageCreateInfo stageInfo{};
+        stageInfo.setStage(ep.type)
+            .setModule(*shaderModule)
+            .setPName(ep.entry.c_str());
+
+        // Look for per‑stage specialisation
+        auto specIt = std::ranges::find_if(
+            info.stageSpecializations,
+            [&ep](const StageSpecialization &s) { return s.stage == ep.type; });
+        if (specIt != info.stageSpecializations.end() &&
+            !specIt->entries.empty()) {
+          vk::SpecializationInfo specInfo;
+          specInfo.setMapEntries(specIt->entries)
+              .setDataSize(specIt->data.size() * sizeof(uint32_t))
+              .setPData(specIt->data.data());
+          stageInfo.setPSpecializationInfo(&specInfo);
+        }
+
+        stages.push_back(stageInfo);
+      });
 
   // 3. Vertex input state
   vk::PipelineVertexInputStateCreateInfo vertexInput{};
@@ -159,14 +176,32 @@ Manager::buildStatic(const StaticPipelineInfo &info,
 
   // 2. Shader stages
   std::vector<vk::PipelineShaderStageCreateInfo> stages;
-  std::ranges::for_each(shaderDef->entryPoints,
-                        [&stages, &shaderModule](const auto &ep) {
-                          vk::PipelineShaderStageCreateInfo stageInfo{};
-                          stageInfo.setStage(ep.type)
-                              .setModule(*shaderModule)
-                              .setPName(ep.entry.c_str());
-                          stages.push_back(stageInfo);
-                        });
+
+  std::ranges::for_each(
+      shaderDef->entryPoints | std::views::filter([](const auto &ep) {
+        return ep.type != vk::ShaderStageFlagBits::eCompute;
+      }),
+      [&stages, &shaderModule, &info](const auto &ep) {
+        vk::PipelineShaderStageCreateInfo stageInfo{};
+        stageInfo.setStage(ep.type)
+            .setModule(*shaderModule)
+            .setPName(ep.entry.c_str());
+
+        // Look for per‑stage specialisation
+        auto specIt = std::ranges::find_if(
+            info.stageSpecializations,
+            [&ep](const StageSpecialization &s) { return s.stage == ep.type; });
+        if (specIt != info.stageSpecializations.end() &&
+            !specIt->entries.empty()) {
+          vk::SpecializationInfo specInfo;
+          specInfo.setMapEntries(specIt->entries)
+              .setDataSize(specIt->data.size() * sizeof(uint32_t))
+              .setPData(specIt->data.data());
+          stageInfo.setPSpecializationInfo(&specInfo);
+        }
+
+        stages.push_back(stageInfo);
+      });
 
   // 3. Vertex input
   vk::PipelineVertexInputStateCreateInfo vertexInput{};
@@ -239,6 +274,56 @@ Manager::buildStatic(const StaticPipelineInfo &info,
   } catch (const vk::SystemError &err) {
     return std::unexpected<PipelineError>(
         {.code = PipelineError::Code::creationFailed, .message = err.what()});
+  }
+}
+
+std::expected<std::shared_ptr<vk::raii::Pipeline>, PipelineError>
+Manager::buildCompute(const ComputePipelineInfo &info,
+                      const std::shared_ptr<vk::raii::Device> &device) {
+  // 1. Load shader module
+  const auto *shaderDef = info.tag.shaderTag;
+  auto loadResult = shaderManager_->loadShader(shaderDef, device);
+  if (!loadResult) {
+    return std::unexpected(shaderToPipelineError(loadResult.error()));
+  }
+
+  std::shared_ptr<vk::raii::ShaderModule> shaderModule = std::move(*loadResult);
+
+  // 2. Find compute entry point
+  auto ep = std::ranges::find_if(shaderDef->entryPoints, [](const auto &e) {
+    return e.type == vk::ShaderStageFlagBits::eCompute;
+  });
+  if (ep == shaderDef->entryPoints.end()) {
+    return std::unexpected(
+        PipelineError{.code = PipelineError::Code::creationFailed,
+                      .message = "No compute entry point in shader"});
+  }
+
+  vk::PipelineShaderStageCreateInfo stage;
+  stage.setStage(vk::ShaderStageFlagBits::eCompute)
+      .setModule(*shaderModule)
+      .setPName(ep->entry.c_str());
+
+  const auto &spec = info.stageSpecialization;
+  vk::SpecializationInfo specInfo;
+  if (spec.stage == vk::ShaderStageFlagBits::eCompute &&
+      !spec.entries.empty()) {
+    specInfo.setMapEntries(spec.entries)
+        .setDataSize(spec.data.size() * sizeof(uint32_t))
+        .setPData(spec.data.data());
+    stage.setPSpecializationInfo(&specInfo);
+  }
+
+  vk::ComputePipelineCreateInfo createInfo{};
+  createInfo.setStage(stage).setLayout(info.tag.layout);
+
+  try {
+    auto pipeline =
+        std::make_shared<vk::raii::Pipeline>(*device, nullptr, createInfo);
+    return pipeline;
+  } catch (const vk::SystemError &err) {
+    return std::unexpected(PipelineError{
+        .code = PipelineError::Code::creationFailed, .message = err.what()});
   }
 }
 
@@ -322,6 +407,45 @@ Manager::getOrCreate(const StaticPipelineInfo &info,
   return it->second;
 }
 
+std::expected<std::shared_ptr<vk::raii::Pipeline>, PipelineError>
+Manager::getOrCreate(const ComputePipelineInfo &info,
+                     const std::shared_ptr<vk::raii::Device> &device) {
+  // 1. Optimistic read
+  {
+    std::shared_lock rlock(cacheMtx_);
+    auto devIt = cache_.find(device);
+    if (devIt != cache_.end()) {
+      std::shared_lock lock(devIt->second.entryMtx);
+      auto pIt = devIt->second.computePipelines.find(info);
+      if (pIt != devIt->second.computePipelines.end()) {
+        return pIt->second;
+      }
+    }
+  }
+
+  // 2. Build
+  auto pipeline = buildCompute(info, device);
+  if (!pipeline) {
+    return std::unexpected(pipeline.error());
+  }
+
+  // 3. Insert
+  DeviceEntry *entry;
+  {
+    std::unique_lock wlock(cacheMtx_);
+    auto devIt = cache_.find(device);
+    if (devIt != cache_.end()) {
+      entry = &devIt->second;
+    } else {
+      entry = &cache_[device];
+    }
+  }
+
+  std::unique_lock lock(entry->entryMtx);
+  auto [it, inserted] = entry->computePipelines.emplace(info, *pipeline);
+  return it->second;
+}
+
 void Manager::invalidateShader(const shaders::Shader *tag) {
   std::shared_lock lock(cacheMtx_);
 
@@ -332,6 +456,9 @@ void Manager::invalidateShader(const shaders::Shader *tag) {
       return pair.first.tag.shaderTag == tag;
     });
     std::erase_if(cache.staticPipelines, [&tag](const auto &pair) {
+      return pair.first.tag.shaderTag == tag;
+    });
+    std::erase_if(cache.computePipelines, [&tag](const auto &pair) {
       return pair.first.tag.shaderTag == tag;
     });
   });

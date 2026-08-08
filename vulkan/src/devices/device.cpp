@@ -111,6 +111,8 @@ Device::Device(const vk::raii::Instance &instance,
   deviceFeatures.setShaderInt16(baseFeatures.shaderInt16);
   deviceFeatures.setShaderInt64(baseFeatures.shaderInt64);
   deviceFeatures.setShaderFloat64(baseFeatures.shaderFloat64);
+  deviceFeatures.setVertexPipelineStoresAndAtomics(
+      baseFeatures.vertexPipelineStoresAndAtomics);
 
   vk::PhysicalDeviceVulkan11Features deviceFeatures11{};
   deviceFeatures11.sType = vk::StructureType::ePhysicalDeviceVulkan11Features;

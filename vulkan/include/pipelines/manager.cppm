@@ -18,9 +18,13 @@ using DynamicCache = std::unordered_map<DynamicPipelineInfo,
 using StaticCache =
     std::unordered_map<StaticPipelineInfo, std::shared_ptr<vk::raii::Pipeline>>;
 
+using ComputeCache = std::unordered_map<ComputePipelineInfo,
+                                        std::shared_ptr<vk::raii::Pipeline>>;
+
 struct FROZENSTARCRYSTAL_GRAPHICS_API DeviceEntry {
   DynamicCache dynamicPipelines;
   StaticCache staticPipelines;
+  ComputeCache computePipelines;
   std::shared_mutex entryMtx;
 };
 } // namespace graphics::vulkan::pipelines
@@ -43,6 +47,10 @@ private:
   buildStatic(const StaticPipelineInfo &info,
               const std::shared_ptr<vk::raii::Device> &device);
 
+  std::expected<std::shared_ptr<vk::raii::Pipeline>, PipelineError>
+  buildCompute(const ComputePipelineInfo &info,
+               const std::shared_ptr<vk::raii::Device> &device);
+
 public:
   Manager(const std::shared_ptr<shaders::Manager> &shaderManager);
   ~Manager();
@@ -62,6 +70,12 @@ public:
   [[nodiscard]] std::expected<std::shared_ptr<vk::raii::Pipeline>,
                               PipelineError>
   getOrCreate(const StaticPipelineInfo &info,
+              const std::shared_ptr<vk::raii::Device> &device);
+
+  // Get or create a compute pipeline
+  [[nodiscard]] std::expected<std::shared_ptr<vk::raii::Pipeline>,
+                              PipelineError>
+  getOrCreate(const ComputePipelineInfo &info,
               const std::shared_ptr<vk::raii::Device> &device);
 
   // Invalidate all pipelines that use a given shader (call after hot-reload)

@@ -10,7 +10,7 @@ import graphics.vulkan.shaders;
 
 export namespace graphics::vulkan::pipelines {
 
-enum class PipelineKind : uint8_t { Dynamic, Static };
+enum class PipelineKind : uint8_t { Dynamic, Static, Compute };
 
 template <PipelineKind Kind> struct FROZENSTARCRYSTAL_GRAPHICS_API PipelineTag {
   static constexpr PipelineKind kind = Kind;
@@ -24,6 +24,7 @@ template <PipelineKind Kind> struct FROZENSTARCRYSTAL_GRAPHICS_API PipelineTag {
 
 using DynamicPipeline = PipelineTag<PipelineKind::Dynamic>;
 using StaticPipeline = PipelineTag<PipelineKind::Static>;
+using ComputePipeline = PipelineTag<PipelineKind::Compute>;
 
 struct FROZENSTARCRYSTAL_GRAPHICS_API InputAssemblyState {
   vk::PrimitiveTopology topology = vk::PrimitiveTopology::eTriangleList;
@@ -69,6 +70,15 @@ struct FROZENSTARCRYSTAL_GRAPHICS_API AttachmentFormats {
   constexpr bool operator==(const AttachmentFormats &) const noexcept = default;
 };
 
+struct FROZENSTARCRYSTAL_GRAPHICS_API StageSpecialization {
+  vk::ShaderStageFlagBits stage;
+  std::vector<vk::SpecializationMapEntry> entries;
+  std::vector<uint32_t> data; // raw constants packed in order
+
+  constexpr bool
+  operator==(const StageSpecialization &) const noexcept = default;
+};
+
 // Dynamic pipeline (dynamic rendering, no render pass)
 
 struct FROZENSTARCRYSTAL_GRAPHICS_API DynamicPipelineInfo {
@@ -89,6 +99,8 @@ struct FROZENSTARCRYSTAL_GRAPHICS_API DynamicPipelineInfo {
 
   // Extra dynamic states beyond Manager defaults
   std::vector<vk::DynamicState> extraDynamicStates;
+
+  std::vector<StageSpecialization> stageSpecializations;
 
   constexpr bool
   operator==(const DynamicPipelineInfo &) const noexcept = default;
@@ -114,11 +126,24 @@ struct FROZENSTARCRYSTAL_GRAPHICS_API StaticPipelineInfo {
 
   std::vector<vk::DynamicState> dynamicStates;
 
+  std::vector<StageSpecialization> stageSpecializations;
+
   vk::RenderPass renderPass = {};
   uint32_t subpass = 0;
 
   constexpr bool
   operator==(const StaticPipelineInfo &) const noexcept = default;
+};
+
+// Compute pipeline
+
+struct FROZENSTARCRYSTAL_GRAPHICS_API ComputePipelineInfo {
+  ComputePipeline tag;
+
+  StageSpecialization stageSpecialization;
+
+  constexpr bool
+  operator==(const ComputePipelineInfo &) const noexcept = default;
 };
 
 struct FROZENSTARCRYSTAL_GRAPHICS_API PipelineError {
@@ -230,11 +255,24 @@ template <> struct hash<graphics::vulkan::pipelines::DynamicPipelineInfo> {
       mix(seed, std::hash<uint32_t>{}(static_cast<uint32_t>(ds)));
     }
 
+    for (const auto &spec : k.stageSpecializations) {
+      mix(seed, std::hash<uint32_t>{}(static_cast<uint32_t>(spec.stage)));
+      for (const auto &entry : spec.entries) {
+        mix(seed, std::hash<uint32_t>{}(entry.constantID));
+        mix(seed, std::hash<size_t>{}(entry.offset));
+        mix(seed, std::hash<size_t>{}(entry.size));
+      }
+      for (uint32_t word : spec.data) {
+        mix(seed, std::hash<uint32_t>{}(word));
+      }
+    }
+
     return seed;
   }
 };
 
 template <> struct hash<graphics::vulkan::pipelines::StaticPipelineInfo> {
+  static constexpr size_t golden = 0x9e3779b9;
   static constexpr size_t ml = 6, mr = 2;
 
   size_t operator()(
@@ -254,12 +292,40 @@ template <> struct hash<graphics::vulkan::pipelines::StaticPipelineInfo> {
 
     size_t seed = std::hash<graphics::vulkan::pipelines::DynamicPipelineInfo>{}(
         dynamicEquivalent);
-    constexpr size_t golden = 0x9e3779b9;
     seed ^= std::hash<uint64_t>{}(reinterpret_cast<uint64_t>(
                 static_cast<vk::RenderPass::CType>(k.renderPass))) +
             golden + (seed << ml) + (seed >> mr);
     seed ^=
         std::hash<uint32_t>{}(k.subpass) + golden + (seed << ml) + (seed >> mr);
+    return seed;
+  }
+};
+
+template <> struct hash<graphics::vulkan::pipelines::ComputePipelineInfo> {
+  static constexpr size_t golden = 0x9e3779b9;
+  static constexpr size_t ml = 6, mr = 2;
+
+  size_t operator()(const graphics::vulkan::pipelines::ComputePipelineInfo &k)
+      const noexcept {
+    size_t seed =
+        std::hash<graphics::vulkan::pipelines::ComputePipeline>{}(k.tag);
+    auto mix = [&seed](size_t h) {
+      seed ^= h + golden + (seed << ml) + (seed >> mr);
+    };
+
+    // Hash stage
+    mix(std::hash<uint32_t>{}(
+        static_cast<uint32_t>(k.stageSpecialization.stage)));
+    // Hash entries and data exactly like in graphics hashes
+    for (const auto &entry : k.stageSpecialization.entries) {
+      mix(std::hash<uint32_t>{}(entry.constantID));
+      mix(std::hash<size_t>{}(entry.offset));
+      mix(std::hash<size_t>{}(entry.size));
+    }
+    for (uint32_t word : k.stageSpecialization.data) {
+      mix(std::hash<uint32_t>{}(word));
+    }
+
     return seed;
   }
 };

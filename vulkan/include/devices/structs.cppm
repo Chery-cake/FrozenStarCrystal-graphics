@@ -61,12 +61,19 @@ struct FROZENSTARCRYSTAL_GRAPHICS_API WindowInfo {
 };
 
 struct FROZENSTARCRYSTAL_GRAPHICS_API AllocatedBuffer {
+private:
+  mutable bool mapped = false;
+
+public:
   std::unique_ptr<vma::raii::Buffer> buffer;
   vk::DeviceSize size;
   std::string name;
 
   AllocatedBuffer() = default;
-  ~AllocatedBuffer() = default;
+  ~AllocatedBuffer() {
+    unmap();
+    buffer.reset();
+  }
 
   // Move only
   AllocatedBuffer(const AllocatedBuffer &) = delete;
@@ -87,11 +94,13 @@ struct FROZENSTARCRYSTAL_GRAPHICS_API AllocatedBuffer {
     if (!buffer) {
       return nullptr;
     }
+    mapped = true;
     return buffer->getAllocation().map();
   }
   void unmap() const {
-    if (buffer) {
+    if (buffer && mapped) {
       buffer->getAllocation().unmap();
+      mapped = false;
     }
   }
   void flush(vk::DeviceSize offset = 0,
