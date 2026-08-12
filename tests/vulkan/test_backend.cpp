@@ -82,7 +82,7 @@ constexpr vk::DeviceSize vbSize = 3 * sizeof(Std430Vertex); // 96 bytes
 // =========================================================================
 // testInstanceHelpers
 // =========================================================================
-static void testInstanceHelpers(Backend &backend) {
+static void testInstanceHelpers(Api &backend) {
   auto exts = instances::Instance::getAvailableExtensions();
   checkMsg(!exts.empty(), "getAvailableExtensions() returned empty");
 
@@ -140,7 +140,7 @@ static void testConfig() {
 // =========================================================================
 // testDeviceManager
 // =========================================================================
-static void testDeviceManager(Backend &backend) {
+static void testDeviceManager(Api &backend) {
   auto entries = backend.getDeviceManager().getDeviceEntries();
   checkMsg(!entries.empty(), "getDeviceEntries() returned empty");
 
@@ -168,7 +168,7 @@ static void testDeviceManager(Backend &backend) {
 // =========================================================================
 // testDeviceAccessors
 // =========================================================================
-static void testDeviceAccessors(Backend &backend) {
+static void testDeviceAccessors(Api &backend) {
   auto dev = backend.getFirstDevice();
   checkMsg(dev != nullptr, "getFirstDevice() returned nullptr");
 
@@ -204,7 +204,7 @@ static void testDeviceAccessors(Backend &backend) {
 // =========================================================================
 // testBufferImageAllocation
 // =========================================================================
-static void testBufferImageAllocation(Backend &backend) {
+static void testBufferImageAllocation(Api &backend) {
   auto dev = backend.getFirstDevice();
   checkMsg(dev != nullptr, "getFirstDevice() returned nullptr");
 
@@ -264,7 +264,7 @@ static void testTransferHelpers() {
 // =========================================================================
 // testBufferTransfer
 // =========================================================================
-static void testBufferTransfer(Backend &backend) {
+static void testBufferTransfer(Api &backend) {
   auto dev = backend.getFirstDevice();
   checkMsg(dev != nullptr, "getFirstDevice() returned nullptr");
 
@@ -313,7 +313,7 @@ static void testBufferTransfer(Backend &backend) {
 // =========================================================================
 // testImageTransfers
 // =========================================================================
-static void testImageTransfers(Backend &backend) {
+static void testImageTransfers(Api &backend) {
   auto dev = backend.getFirstDevice();
   checkMsg(dev != nullptr, "getFirstDevice() returned nullptr");
 
@@ -377,7 +377,7 @@ static void testImageTransfers(Backend &backend) {
 // =========================================================================
 // testAsyncTransfer
 // =========================================================================
-static void testAsyncTransfer(Backend &backend) {
+static void testAsyncTransfer(Api &backend) {
   auto dev = backend.getFirstDevice();
   checkMsg(dev != nullptr, "getFirstDevice() returned nullptr");
 
@@ -458,7 +458,7 @@ testSwapchainAccessors(const std::shared_ptr<devices::WindowInfo> &windowInfo,
 // =========================================================================
 // testShaderManager
 // =========================================================================
-static void testShaderManager(Backend &backend) {
+static void testShaderManager(Api &backend) {
   auto dev = backend.getFirstDevice();
   checkMsg(dev != nullptr, "getFirstDevice() returned nullptr");
 
@@ -490,7 +490,7 @@ static void testShaderManager(Backend &backend) {
 // testPipelineManager
 // =========================================================================
 static void
-testPipelineManager(Backend &backend,
+testPipelineManager(Api &backend,
                     const std::shared_ptr<devices::WindowInfo> &windowInfo) {
   auto dev = backend.getFirstDevice();
   checkMsg(dev != nullptr, "getFirstDevice() returned nullptr");
@@ -619,7 +619,7 @@ testPipelineManager(Backend &backend,
 // =========================================================================
 // testExplicitDeviceWindow
 // =========================================================================
-static void testExplicitDeviceWindow(Backend &backend, GLFWwindow *glfwWin,
+static void testExplicitDeviceWindow(Api &backend, GLFWwindow *glfwWin,
                                      uint32_t w, uint32_t h) {
   auto dev = backend.getFirstDevice();
   checkMsg(dev != nullptr, "getFirstDevice() returned nullptr");
@@ -670,7 +670,7 @@ int main() {
     // ───────────────────────────────────────────
     auto poolManager = std::make_shared<concurrency::pool::Manager>();
 
-    graphics::GraphicsBackend backend{poolManager};
+    graphics::GraphicsApi backend{poolManager};
 
     uint32_t extCount = 0;
     const char **glfwExts = glfwGetRequiredInstanceExtensions(&extCount);

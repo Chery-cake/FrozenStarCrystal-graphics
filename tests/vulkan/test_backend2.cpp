@@ -83,7 +83,7 @@ constexpr vk::DeviceSize vbSize = 3 * sizeof(Std430Vertex); // 96 bytes
 // testGraphicsLoop
 // =========================================================================
 static void
-testGraphicsLoop(Backend &backend,
+testGraphicsLoop(Api &backend,
                  const std::shared_ptr<devices::WindowInfo> &windowInfo,
                  GLFWwindow *glfwWin) {
   int frameCount = 0;
@@ -94,28 +94,27 @@ testGraphicsLoop(Backend &backend,
     glfwGetFramebufferSize(glfwWin, &w, &h);
 
     if (windowInfo->swapchain && windowInfo->swapchain->needRecreation()) {
-      Backend::resizeWindow(windowInfo, static_cast<uint32_t>(w),
-                            static_cast<uint32_t>(h));
+      Api::resizeWindow(windowInfo, static_cast<uint32_t>(w),
+                        static_cast<uint32_t>(h));
       continue;
     }
 
-    auto ctx = backend.beginFrame();
+    auto frame = backend.beginFrame(windowInfo);
     bool anyValid = false;
-    for (auto &wf : ctx.windows) {
-      if (!wf.valid) {
-        Backend::resizeWindow(wf.windowInfo, static_cast<uint32_t>(w),
-                              static_cast<uint32_t>(h));
-      } else {
-        anyValid = true;
-      }
+    if (!frame.valid) {
+      Api::resizeWindow(frame.windowInfo, static_cast<uint32_t>(w),
+                        static_cast<uint32_t>(h));
+    } else {
+      anyValid = true;
     }
+
     if (!anyValid) {
-      backend.endFrame(); // ← always call endFrame to clear the acquired
-                          // context
+      Api::endFrame(frame); // ← always call endFrame to clear the
+                            // acquired context
       continue;
     }
 
-    backend.endFrame();
+    Api::endFrame(frame);
     ++frameCount;
   }
 
@@ -129,7 +128,7 @@ testGraphicsLoop(Backend &backend,
 // testRenderLoop
 // =========================================================================
 static void
-testRenderLoop(Backend &backend,
+testRenderLoop(Api &backend,
                const std::shared_ptr<devices::WindowInfo> &windowInfo,
                GLFWwindow *glfwWin) {
   // ── Prepare the pipeline ─────────────────────────────────────────────
@@ -171,42 +170,40 @@ testRenderLoop(Backend &backend,
     glfwGetFramebufferSize(glfwWin, &w, &h);
 
     if (windowInfo->swapchain && windowInfo->swapchain->needRecreation()) {
-      Backend::resizeWindow(windowInfo, static_cast<uint32_t>(w),
-                            static_cast<uint32_t>(h));
+      Api::resizeWindow(windowInfo, static_cast<uint32_t>(w),
+                        static_cast<uint32_t>(h));
       continue;
     }
 
-    auto ctx = backend.beginFrame();
+    auto frame = backend.beginFrame(windowInfo);
     bool anyValid = false;
-    for (auto &wf : ctx.windows) {
-      if (!wf.valid) {
-        Backend::resizeWindow(wf.windowInfo, static_cast<uint32_t>(w),
-                              static_cast<uint32_t>(h));
-      } else {
-        anyValid = true;
+    if (!frame.valid) {
+      Api::resizeWindow(frame.windowInfo, static_cast<uint32_t>(w),
+                        static_cast<uint32_t>(h));
+    } else {
+      anyValid = true;
 
-        // Record draw commands into the already‑opened command buffer
-        vk::CommandBuffer cmd = wf.cmd;
-        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline);
+      // Record draw commands into the already‑opened command buffer
+      vk::CommandBuffer cmd = frame.cmd;
+      cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline);
 
-        vk::Viewport viewport{0.0f,
-                              0.0f,
-                              static_cast<float>(wf.extent.width),
-                              static_cast<float>(wf.extent.height),
-                              0.0f,
-                              1.0f};
-        cmd.setViewport(0, viewport);
-        cmd.setScissor(0, vk::Rect2D{{0, 0}, wf.extent});
-        cmd.draw(3, 1, 0, 0); // 3 vertices → triangle
-      }
+      vk::Viewport viewport{0.0f,
+                            0.0f,
+                            static_cast<float>(frame.extent.width),
+                            static_cast<float>(frame.extent.height),
+                            0.0f,
+                            1.0f};
+      cmd.setViewport(0, viewport);
+      cmd.setScissor(0, vk::Rect2D{{0, 0}, frame.extent});
+      cmd.draw(3, 1, 0, 0); // 3 vertices → triangle
     }
 
     if (!anyValid) {
-      backend.endFrame();
+      Api::endFrame(frame);
       continue;
     }
 
-    backend.endFrame();
+    Api::endFrame(frame);
     ++frameCount;
   }
 
@@ -216,7 +213,7 @@ testRenderLoop(Backend &backend,
   std::cout << "[PASS] testRenderLoop (" << frameCount << " frames)\n";
 }
 
-static void testComputeDispatch(Backend &backend) {
+static void testComputeDispatch(Api &backend) {
   auto dev = backend.getFirstDevice();
   checkMsg(dev != nullptr, "getFirstDevice() returned nullptr");
 
@@ -302,7 +299,7 @@ static void testComputeDispatch(Backend &backend) {
 }
 
 static void testComputeWithGraphicsSingleShader(
-    Backend &backend, const std::shared_ptr<devices::WindowInfo> &windowInfo,
+    Api &backend, const std::shared_ptr<devices::WindowInfo> &windowInfo,
     GLFWwindow *glfwWin) {
 
   auto dev = backend.getFirstDevice();
@@ -425,42 +422,41 @@ static void testComputeWithGraphicsSingleShader(
     glfwGetFramebufferSize(glfwWin, &w, &h);
 
     if (windowInfo->swapchain && windowInfo->swapchain->needRecreation()) {
-      Backend::resizeWindow(windowInfo, static_cast<uint32_t>(w),
-                            static_cast<uint32_t>(h));
+      Api::resizeWindow(windowInfo, static_cast<uint32_t>(w),
+                        static_cast<uint32_t>(h));
       continue;
     }
 
-    auto ctx = backend.beginFrame();
+    auto frame = backend.beginFrame(windowInfo);
     bool anyValid = false;
-    for (auto &wf : ctx.windows) {
-      if (!wf.valid) {
-        Backend::resizeWindow(wf.windowInfo, static_cast<uint32_t>(w),
-                              static_cast<uint32_t>(h));
-      } else {
-        anyValid = true;
-        vk::CommandBuffer cmd = wf.cmd;
+    if (!frame.valid) {
+      Api::resizeWindow(frame.windowInfo, static_cast<uint32_t>(w),
+                        static_cast<uint32_t>(h));
+    } else {
+      anyValid = true;
+      vk::CommandBuffer cmd = frame.cmd;
 
-        cmd.bindVertexBuffers(0, vertexStorage.getBuffer(), {0});
-        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *gfxPipe);
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
-                               *pipelineLayout, 0, *descSet, {});
+      cmd.bindVertexBuffers(0, vertexStorage.getBuffer(), {0});
+      cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *gfxPipe);
+      cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipelineLayout,
+                             0, *descSet, {});
 
-        vk::Viewport vp{0,
-                        0,
-                        static_cast<float>(wf.extent.width),
-                        static_cast<float>(wf.extent.height),
-                        0,
-                        1};
-        cmd.setViewport(0, vp);
-        cmd.setScissor(0, vk::Rect2D{{0, 0}, wf.extent});
-        cmd.draw(3, 1, 0, 0);
-      }
+      vk::Viewport vp{0,
+                      0,
+                      static_cast<float>(frame.extent.width),
+                      static_cast<float>(frame.extent.height),
+                      0,
+                      1};
+      cmd.setViewport(0, vp);
+      cmd.setScissor(0, vk::Rect2D{{0, 0}, frame.extent});
+      cmd.draw(3, 1, 0, 0);
     }
+
     if (!anyValid) {
-      backend.endFrame();
+      Api::endFrame(frame);
       continue;
     }
-    backend.endFrame();
+    Api::endFrame(frame);
     ++frameCount;
   }
 
@@ -472,7 +468,7 @@ static void testComputeWithGraphicsSingleShader(
 }
 
 static void testComputeWithGraphicsMultipleShaders(
-    Backend &backend, const std::shared_ptr<devices::WindowInfo> &windowInfo,
+    Api &backend, const std::shared_ptr<devices::WindowInfo> &windowInfo,
     GLFWwindow *glfwWin) {
   auto dev = backend.getFirstDevice();
   checkMsg(dev != nullptr, "getFirstDevice() returned nullptr");
@@ -604,36 +600,36 @@ static void testComputeWithGraphicsMultipleShaders(
     glfwGetFramebufferSize(glfwWin, &w, &h);
 
     if (windowInfo->swapchain && windowInfo->swapchain->needRecreation()) {
-      Backend::resizeWindow(windowInfo, static_cast<uint32_t>(w),
-                            static_cast<uint32_t>(h));
+      Api::resizeWindow(windowInfo, static_cast<uint32_t>(w),
+                        static_cast<uint32_t>(h));
       continue;
     }
 
-    auto ctx = backend.beginFrame();
+    auto frame = backend.beginFrame(windowInfo);
     bool anyValid = false;
-    for (auto &wf : ctx.windows) {
-      if (!wf.valid) {
-        Backend::resizeWindow(wf.windowInfo, static_cast<uint32_t>(w),
-                              static_cast<uint32_t>(h));
-      } else {
-        anyValid = true;
-        vk::CommandBuffer cmd = wf.cmd;
-        cmd.bindVertexBuffers(0, vertexStorage.getBuffer(), {0});
-        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *gfxPipe);
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
-                               *gfxPipelineLayout, 0, *gfxSet, {});
-        vk::Viewport vp{0, 0, (float)wf.extent.width, (float)wf.extent.height,
-                        0, 1};
-        cmd.setViewport(0, vp);
-        cmd.setScissor(0, vk::Rect2D{{0, 0}, wf.extent});
-        cmd.draw(3, 1, 0, 0);
-      }
+
+    if (!frame.valid) {
+      Api::resizeWindow(frame.windowInfo, static_cast<uint32_t>(w),
+                        static_cast<uint32_t>(h));
+    } else {
+      anyValid = true;
+      vk::CommandBuffer cmd = frame.cmd;
+      cmd.bindVertexBuffers(0, vertexStorage.getBuffer(), {0});
+      cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *gfxPipe);
+      cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
+                             *gfxPipelineLayout, 0, *gfxSet, {});
+      vk::Viewport vp{
+          0, 0, (float)frame.extent.width, (float)frame.extent.height, 0, 1};
+      cmd.setViewport(0, vp);
+      cmd.setScissor(0, vk::Rect2D{{0, 0}, frame.extent});
+      cmd.draw(3, 1, 0, 0);
     }
+
     if (!anyValid) {
-      backend.endFrame();
+      Api::endFrame(frame);
       continue;
     }
-    backend.endFrame();
+    Api::endFrame(frame);
     ++frameCount;
   }
 
@@ -667,7 +663,7 @@ int main() {
     // ───────────────────────────────────────────
     auto poolManager = std::make_shared<concurrency::pool::Manager>();
 
-    graphics::GraphicsBackend backend{poolManager};
+    graphics::GraphicsApi backend{poolManager};
 
     uint32_t extCount = 0;
     const char **glfwExts = glfwGetRequiredInstanceExtensions(&extCount);

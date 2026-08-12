@@ -15,12 +15,12 @@ export namespace graphics {
 
 #if defined(GRAPHICS_BACKEND_VULKAN)
 using namespace vulkan;
-using GraphicsBackend = Backend;
+using GraphicsApi = Api;
 #else
 #error "No graphics backend selected"
 #endif
 
 static_assert(
-    ApiCheck<GraphicsBackend>,
+    ApiCheck<GraphicsApi>,
     "The selected backend doesn't support all the minimun requirements");
 } // namespace graphics

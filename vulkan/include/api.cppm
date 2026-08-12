@@ -2,7 +2,7 @@ module;
 
 #include "FrozenStarCrystal-graphics_export.h"
 
-export module graphics.vulkan:backend;
+export module graphics.vulkan:api;
 
 import std.compat;
 import vulkan;
@@ -19,24 +19,21 @@ inline constexpr concurrency::pool::Pool gpuPoolDesc{.name = "gpuPool"};
 
 // RenderContext is the value returned by VulkanBackend::beginFrame().
 // It carries per-window frame data needed to record rendering commands.
-struct FROZENSTARCRYSTAL_GRAPHICS_API RenderContext {
 
-  // Per-window frame data
-  struct WindowFrame {
-    std::shared_ptr<devices::Device> device;
-    std::shared_ptr<devices::WindowInfo> windowInfo;
-    uint32_t imageIndex = 0;
-    vk::CommandBuffer cmd; // primary command buffer, already begun
-    vk::Image image;       // swapchain image for this frame
-    vk::ImageView view;    // swapchain image view (backed by ownedView)
-    vk::Extent2D extent;
-    vk::Format format;
-    // Owns the image view for this frame
-    std::shared_ptr<vk::raii::ImageView> ownedView;
+// Per-window frame data
+struct FROZENSTARCRYSTAL_GRAPHICS_API WindowFrame {
+  std::shared_ptr<devices::Device> device;
+  std::shared_ptr<devices::WindowInfo> windowInfo;
+  uint32_t imageIndex = 0;
+  vk::CommandBuffer cmd; // primary command buffer, already begun
+  vk::Image image;       // swapchain image for this frame
+  vk::ImageView view;    // swapchain image view (backed by ownedView)
+  vk::Extent2D extent;
+  vk::Format format;
+  // Owns the image view for this frame
+  std::shared_ptr<vk::raii::ImageView> ownedView;
 
-    bool valid = false; // false → swapchain out-of-date; retry after resize
-  };
-  std::vector<WindowFrame> windows;
+  bool valid = false; // false → swapchain out-of-date; retry after resize
 };
 
 struct FROZENSTARCRYSTAL_GRAPHICS_API WindowCmdData {
@@ -44,7 +41,7 @@ struct FROZENSTARCRYSTAL_GRAPHICS_API WindowCmdData {
   uint32_t framesInFlight = 0;
 };
 
-class FROZENSTARCRYSTAL_GRAPHICS_API Backend {
+class FROZENSTARCRYSTAL_GRAPHICS_API Api {
 private:
   std::unique_ptr<instances::Instance> instance_;
   std::unique_ptr<devices::Manager> deviceManager_;
@@ -53,21 +50,21 @@ private:
   std::shared_ptr<concurrency::pool::ThreadPool> gpuPool_;
   std::shared_ptr<concurrency::pool::Manager> poolManager_;
 
-  // State kept between beginFrame() and endFrame()
-  RenderContext currentFrame_;
-
   // Per-window command buffer pools (one pool per WindowInfo pointer)
   std::unordered_map<std::shared_ptr<devices::WindowInfo>, WindowCmdData>
       frameCmdPools_;
 
-public:
-  Backend(const std::shared_ptr<concurrency::pool::Manager> &poolManager);
-  ~Backend();
+  std::shared_ptr<devices::Device> findDeviceForWindow(
+      const std::shared_ptr<devices::WindowInfo> &windowInfo) const;
 
-  Backend(const Backend &) = delete;
-  Backend &operator=(const Backend &) = delete;
-  Backend(Backend &&) = delete;
-  Backend &operator=(Backend &&) = delete;
+public:
+  Api(const std::shared_ptr<concurrency::pool::Manager> &poolManager);
+  ~Api();
+
+  Api(const Api &) = delete;
+  Api &operator=(const Api &) = delete;
+  Api(Api &&) = delete;
+  Api &operator=(Api &&) = delete;
 
   // ── ApiCheck-required interface ────────────────────────────────────────
 
@@ -77,14 +74,20 @@ public:
   //   • vkCmdBeginRendering with a clear-to-black colour attachment
   // Returns a RenderContext with valid=false if any swapchain is out-of-date
   // (caller must resize and call beginFrame again).
-  [[nodiscard]] RenderContext beginFrame();
+  [[nodiscard]] WindowFrame
+  beginFrame(const std::shared_ptr<devices::Device> &device,
+             const std::shared_ptr<devices::WindowInfo> &windowInfo);
+
+  // Convenience overload: finds the device that owns windowInfo.
+  [[nodiscard]] WindowFrame
+  beginFrame(const std::shared_ptr<devices::WindowInfo> &windowInfo);
 
   // For each window in the last RenderContext:
   //   • vkCmdEndRendering
   //   • pipeline barrier COLOR_ATTACHMENT_OPTIMAL → PRESENT_SRC_KHR
   //   • end command buffer
   //   • submitAndPresent via the window's swapchain
-  void endFrame();
+  static void endFrame(WindowFrame &frame);
 
   // Blocks until all devices report idle.
   void waitIdle();
