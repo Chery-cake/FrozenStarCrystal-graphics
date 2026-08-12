@@ -82,7 +82,7 @@ RenderContext Backend::beginFrame() {
     // Command buffer pool management
     // Retrieve the pre‑allocated command buffer for this image index
     auto &cmdData = frameCmdPools.at(windowInfo);
-    vk::CommandBuffer cmd = *cmdData.pool.buffers[frame.imageIndex];
+    vk::CommandBuffer cmd = *cmdData.pool.primary[frame.imageIndex];
 
     // Record commands
     vk::CommandBufferBeginInfo beginInfo{
@@ -260,7 +260,7 @@ void Backend::createWindow(
                                     vulkan::devices::CommandBufferPool{
                                         device->getDevicePtr(), cpInfo},
                                 .framesInFlight = framesInFlight});
-  it->second.pool.allocate(
+  it->second.pool.allocatePrimary(
       imageCount); // one command buffer per swapchain image
 }
 

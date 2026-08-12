@@ -9,28 +9,37 @@ import :structs;
 import :device;
 import :swapchain;
 
+import concurrency;
+
 export namespace graphics::vulkan::devices {
 
 // ---------- intra‑device transfers (same Device&) ----------
 
 // Buffer -> Buffer
-void transfer(const std::shared_ptr<Device> &device, const AllocatedBuffer &src,
-              vk::DeviceSize srcOffset, AllocatedBuffer &dst,
-              vk::DeviceSize dstOffset, vk::DeviceSize size);
+concurrency::pool::coroutine::CoroutineTask<
+    concurrency::pool::coroutine::policy::Suspend::Never, void>
+transfer(const std::shared_ptr<Device> &device, const AllocatedBuffer &src,
+         vk::DeviceSize srcOffset, AllocatedBuffer &dst,
+         vk::DeviceSize dstOffset, vk::DeviceSize size);
 
 // Buffer -> Image (whole image, one mip level 0, layer 0, whole extent)
-void transfer(
+concurrency::pool::coroutine::CoroutineTask<
+    concurrency::pool::coroutine::policy::Suspend::Never, void>
+transfer(
     const std::shared_ptr<Device> &device, const AllocatedBuffer &src,
     vk::DeviceSize bufferOffset, AllocatedImage &dst,
     vk::ImageLayout dstFinalLayout = vk::ImageLayout::eShaderReadOnlyOptimal);
 
 // Image -> Buffer (whole image, mip 0, layer 0)
-void transfer(const std::shared_ptr<Device> &device, const AllocatedImage &src,
-              AllocatedBuffer &dst, vk::DeviceSize bufferOffset);
-;
+concurrency::pool::coroutine::CoroutineTask<
+    concurrency::pool::coroutine::policy::Suspend::Never, void>
+transfer(const std::shared_ptr<Device> &device, const AllocatedImage &src,
+         AllocatedBuffer &dst, vk::DeviceSize bufferOffset);
 
 // Image -> Image (whole images, mip 0, layer 0)
-void transfer(
+concurrency::pool::coroutine::CoroutineTask<
+    concurrency::pool::coroutine::policy::Suspend::Never, void>
+transfer(
     const std::shared_ptr<Device> &device, const AllocatedImage &src,
     AllocatedImage &dst,
     vk::ImageLayout dstFinalLayout = vk::ImageLayout::eShaderReadOnlyOptimal);
@@ -73,13 +82,16 @@ void recordTransfer(
 // ---------- inter‑device transfers (two Device&) ----------
 
 // Buffer -> Buffer (different devices)
-void transfer(const std::shared_ptr<Device> &srcDevice,
-              const AllocatedBuffer &src, vk::DeviceSize srcOffset,
-              const std::shared_ptr<Device> &dstDevice, AllocatedBuffer &dst,
-              vk::DeviceSize dstOffset, vk::DeviceSize size);
+concurrency::pool::coroutine::CoroutineTask<
+    concurrency::pool::coroutine::policy::Suspend::Never, void>
+transfer(const std::shared_ptr<Device> &srcDevice, const AllocatedBuffer &src,
+         vk::DeviceSize srcOffset, const std::shared_ptr<Device> &dstDevice,
+         AllocatedBuffer &dst, vk::DeviceSize dstOffset, vk::DeviceSize size);
 
 // Buffer -> Image  (different devices)
-void transfer(
+concurrency::pool::coroutine::CoroutineTask<
+    concurrency::pool::coroutine::policy::Suspend::Never, void>
+transfer(
     const std::shared_ptr<Device> &srcDevice, const AllocatedBuffer &src,
     vk::DeviceSize srcOffset,
 
@@ -87,13 +99,16 @@ void transfer(
     vk::ImageLayout dstFinalLayout = vk::ImageLayout::eShaderReadOnlyOptimal);
 
 // Image -> Buffer  (different devices)
-void transfer(const std::shared_ptr<Device> &srcDevice,
-              const AllocatedImage &src,
-              const std::shared_ptr<Device> &dstDevice, AllocatedBuffer &dst,
-              vk::DeviceSize dstOffset);
+concurrency::pool::coroutine::CoroutineTask<
+    concurrency::pool::coroutine::policy::Suspend::Never, void>
+transfer(const std::shared_ptr<Device> &srcDevice, const AllocatedImage &src,
+         const std::shared_ptr<Device> &dstDevice, AllocatedBuffer &dst,
+         vk::DeviceSize dstOffset);
 
 // Image -> Image  (different devices)
-void transfer(
+concurrency::pool::coroutine::CoroutineTask<
+    concurrency::pool::coroutine::policy::Suspend::Never, void>
+transfer(
     const std::shared_ptr<Device> &srcDevice, const AllocatedImage &src,
     const std::shared_ptr<Device> &dstDevice, AllocatedImage &dst,
     vk::ImageLayout dstFinalLayout = vk::ImageLayout::eShaderReadOnlyOptimal);
@@ -116,56 +131,6 @@ bool isBlockCompressed(vk::Format format);
 // Correct byte size for a staging/readback buffer covering the whole image.
 // Handles BCn by aligning dimensions up to the 4×4 block boundary.
 vk::DeviceSize imageDataSize(vk::Format format, vk::Extent3D extent);
-
-// ---------- async variants (offloaded to Device's thread pool) ----------
-
-// Each async overload mirrors the sync version but returns std::future<void>.
-// The returned future completes when the GPU transfer is finished.
-
-std::future<void> transferAsync(std::shared_ptr<Device> device,
-                                std::shared_ptr<AllocatedBuffer> src,
-                                vk::DeviceSize srcOffset,
-                                std::shared_ptr<AllocatedBuffer> dst,
-                                vk::DeviceSize dstOffset, vk::DeviceSize size);
-
-std::future<void> transferAsync(
-    std::shared_ptr<Device> device, std::shared_ptr<AllocatedBuffer> src,
-    vk::DeviceSize bufferOffset, std::shared_ptr<AllocatedImage> dst,
-    vk::ImageLayout dstFinalLayout = vk::ImageLayout::eShaderReadOnlyOptimal);
-
-std::future<void> transferAsync(std::shared_ptr<Device> device,
-                                std::shared_ptr<AllocatedImage> src,
-                                std::shared_ptr<AllocatedBuffer> dst,
-                                vk::DeviceSize bufferOffset);
-
-std::future<void> transferAsync(
-    std::shared_ptr<Device> device, std::shared_ptr<AllocatedImage> src,
-    std::shared_ptr<AllocatedImage> dst,
-    vk::ImageLayout dstFinalLayout = vk::ImageLayout::eShaderReadOnlyOptimal);
-
-std::future<void> transferAsync(std::shared_ptr<Device> srcDevice,
-                                std::shared_ptr<AllocatedBuffer> src,
-                                vk::DeviceSize srcOffset,
-                                std::shared_ptr<Device> dstDevice,
-                                std::shared_ptr<AllocatedBuffer> dst,
-                                vk::DeviceSize dstOffset, vk::DeviceSize size);
-
-std::future<void> transferAsync(
-    std::shared_ptr<Device> srcDevice, std::shared_ptr<AllocatedBuffer> src,
-    vk::DeviceSize srcOffset, std::shared_ptr<Device> dstDevice,
-    std::shared_ptr<AllocatedImage> dst,
-    vk::ImageLayout dstFinalLayout = vk::ImageLayout::eShaderReadOnlyOptimal);
-
-std::future<void> transferAsync(std::shared_ptr<Device> srcDevice,
-                                std::shared_ptr<AllocatedImage> src,
-                                std::shared_ptr<Device> dstDevice,
-                                std::shared_ptr<AllocatedBuffer> dst,
-                                vk::DeviceSize dstOffset);
-
-std::future<void> transferAsync(
-    std::shared_ptr<Device> srcDevice, std::shared_ptr<AllocatedImage> src,
-    std::shared_ptr<Device> dstDevice, std::shared_ptr<AllocatedImage> dst,
-    vk::ImageLayout dstFinalLayout = vk::ImageLayout::eShaderReadOnlyOptimal);
 
 } // namespace graphics::vulkan::devices
 

@@ -298,6 +298,11 @@ std::vector<std::string> Device::getAvailableExtensions() {
   return suported;
 }
 
+FenceWaiter &Device::getFenceWaiter() {
+  static FenceWaiter instance;
+  return instance;
+}
+
 void Device::createWindow(const std::shared_ptr<WindowInfo> &windowInfo,
                           uint32_t framesInFlight,
                           Swapchain::SwapchainInfo &swapInfo) {

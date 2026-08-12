@@ -17,7 +17,8 @@ import concurrency;
 
 export namespace graphics::vulkan::devices {
 
-class FROZENSTARCRYSTAL_GRAPHICS_API Device {
+class FROZENSTARCRYSTAL_GRAPHICS_API Device
+    : public std::enable_shared_from_this<Device> {
 private:
   std::shared_ptr<vk::raii::PhysicalDevice> physicalDevice_;
   std::shared_ptr<vk::raii::Device> device_;
@@ -57,8 +58,7 @@ private:
 
   std::vector<std::string> getAvailableExtensions();
 
-  template <std::invocable<vk::CommandBuffer> F>
-  void submitOneShot(vk::Queue queue, uint32_t queueFamily, F &&recordFn);
+  static FenceWaiter &getFenceWaiter();
 
   std::unordered_set<std::thread::id> touchedThreads_;
   std::shared_ptr<uint8_t> aliveToken_;
@@ -162,44 +162,59 @@ public:
 
   [[nodiscard]] uint64_t getFrameIndex() const { return frameIndex_; }
 
+  template <std::invocable<vk::CommandBuffer> F>
+  [[nodiscard]] concurrency::pool::coroutine::CoroutineTask<
+      concurrency::pool::coroutine::policy::Suspend::Never, void>
+  submitOneShot(vk::Queue queue, uint32_t queueFamily, F &&recordFn);
+  CommandBufferHandle acquireCommandBuffer(uint32_t queueFamily);
+
 private:
   friend struct ThreadPoolCleanup;
-  friend void transfer(const std::shared_ptr<Device> &device,
-                       const AllocatedBuffer &src, vk::DeviceSize srcOffset,
-                       AllocatedBuffer &dst, vk::DeviceSize dstOffset,
-                       vk::DeviceSize size);
-  friend void transfer(const std::shared_ptr<Device> &device,
-                       const AllocatedBuffer &src, vk::DeviceSize bufferOffset,
-                       AllocatedImage &dst, vk::ImageLayout dstFinalLayout);
-  friend void transfer(const std::shared_ptr<Device> &device,
-                       const AllocatedImage &src, AllocatedBuffer &dst,
-                       vk::DeviceSize bufferOffset);
-  friend void transfer(const std::shared_ptr<Device> &device,
-                       const AllocatedImage &src, AllocatedImage &dst,
-                       vk::ImageLayout dstFinalLayout);
 };
 
+CommandBufferHandle Device::acquireCommandBuffer(uint32_t queueFamily) {
+  auto &pool = [&]() -> CommandBufferPool & {
+    if (queueFamily == info_.queueFamilies.graphicsQueue) {
+      return {getGraphicsPool()};
+    }
+    if (queueFamily == info_.queueFamilies.computeQueue) {
+      return {getComputePool()};
+    }
+    if (queueFamily == info_.queueFamilies.protectedQueue) {
+      return {getProtectedPool()};
+    }
+    if (queueFamily == info_.queueFamilies.sparseBindingQueue) {
+      return {getSparseBidingPool()};
+    }
+    return getTransferPool(); // fallback
+  }();
+  return {pool};
+}
+
 template <std::invocable<vk::CommandBuffer> F>
-void Device::submitOneShot(vk::Queue queue, uint32_t queueFamily,
-                           F &&recordFn) {
-  const CommandPoolCreateInfo createInfo{.queueFamily = queueFamily};
-  CommandBufferPool pool{device_, createInfo};
-  pool.allocate(1);
-  auto &cmd = pool.buffers.front();
+concurrency::pool::coroutine::CoroutineTask<
+    concurrency::pool::coroutine::policy::Suspend::Never, void>
+Device::submitOneShot(vk::Queue queue, uint32_t queueFamily, F &&recordFn) {
+
+  auto cmdHandle = acquireCommandBuffer(queueFamily);
+  vk::CommandBuffer cmd = *cmdHandle.buffer;
+
   cmd.begin(vk::CommandBufferBeginInfo{
       vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-  std::forward<F>(recordFn)(*cmd);
+  std::forward<F>(recordFn)(cmd);
   cmd.end();
 
   vk::SubmitInfo submit;
-  submit.setCommandBuffers(*cmd);
+  submit.setCommandBuffers(cmd);
+
   vk::raii::Fence fence{*device_, vk::FenceCreateInfo{}};
   queue.submit(submit, *fence);
-  auto result = device_->waitForFences(
-      *fence, vk::True, std::numeric_limits<std::uint64_t>::max());
-  if (result != vk::Result::eSuccess) {
-    throw std::runtime_error("Transfer submission failed");
-  }
+
+  co_await FenceAwaiter{.waiter = getFenceWaiter(),
+                        .device = shared_from_this(),
+                        .fence = std::move(fence),
+                        .cmdBuffer = std::move(cmdHandle)};
+  co_return;
 }
 
 } // namespace graphics::vulkan::devices

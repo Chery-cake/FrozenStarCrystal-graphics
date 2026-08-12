@@ -8,6 +8,8 @@ module graphics.vulkan.devices;
 import std.compat;
 import vulkan;
 
+import concurrency;
+
 namespace graphics::vulkan::devices {
 
 namespace {
@@ -195,27 +197,36 @@ vk::DeviceSize imageDataSize(vk::Format format, vk::Extent3D extent) {
 
 // ===================== intra‑device implementations =====================
 
-void transfer(const std::shared_ptr<Device> &device, const AllocatedBuffer &src,
-              vk::DeviceSize srcOffset, AllocatedBuffer &dst,
-              vk::DeviceSize dstOffset, vk::DeviceSize size) {
+concurrency::pool::coroutine::CoroutineTask<
+    concurrency::pool::coroutine::policy::Suspend::Never, void>
+transfer(const std::shared_ptr<Device> &device, const AllocatedBuffer &src,
+         vk::DeviceSize srcOffset, AllocatedBuffer &dst,
+         vk::DeviceSize dstOffset, vk::DeviceSize size) {
   uint32_t family = 0;
   auto queue = selectQueue(device, family);
-  device->submitOneShot(
+  co_await device
+      ->schedule<concurrency::pool::coroutine::policy::Queue::Enqueue>();
+  co_await device->submitOneShot(
       queue, family,
       [&srcOffset, &dstOffset, &size, &src, &dst](vk::CommandBuffer cmd) {
         vk::BufferCopy region{srcOffset, dstOffset, size};
         cmd.copyBuffer(src.getBuffer(), dst.getBuffer(), region);
       });
+  co_return;
 }
 
-void transfer(const std::shared_ptr<Device> &device, const AllocatedBuffer &src,
-              vk::DeviceSize bufferOffset, AllocatedImage &dst,
-              vk::ImageLayout dstFinalLayout) {
+concurrency::pool::coroutine::CoroutineTask<
+    concurrency::pool::coroutine::policy::Suspend::Never, void>
+transfer(const std::shared_ptr<Device> &device, const AllocatedBuffer &src,
+         vk::DeviceSize bufferOffset, AllocatedImage &dst,
+         vk::ImageLayout dstFinalLayout) {
   uint32_t family = 0;
   auto queue = selectQueue(device, family);
   const auto aspect = aspectFromFormat(dst.format);
   const auto srcLayout = dst.currentLayout;
-  device->submitOneShot(
+  co_await device
+      ->schedule<concurrency::pool::coroutine::policy::Queue::Enqueue>();
+  co_await device->submitOneShot(
       queue, family,
       [&src, &dst, &bufferOffset, &dstFinalLayout, &aspect,
        srcLayout](vk::CommandBuffer cmd) {
@@ -242,15 +253,20 @@ void transfer(const std::shared_ptr<Device> &device, const AllocatedBuffer &src,
                         vk::AccessFlagBits2::eMemoryRead);
       });
   dst.currentLayout = dstFinalLayout;
+  co_return;
 }
 
-void transfer(const std::shared_ptr<Device> &device, const AllocatedImage &src,
-              AllocatedBuffer &dst, vk::DeviceSize bufferOffset) {
+concurrency::pool::coroutine::CoroutineTask<
+    concurrency::pool::coroutine::policy::Suspend::Never, void>
+transfer(const std::shared_ptr<Device> &device, const AllocatedImage &src,
+         AllocatedBuffer &dst, vk::DeviceSize bufferOffset) {
   uint32_t family = 0;
   auto queue = selectQueue(device, family);
   const auto aspect = aspectFromFormat(src.format);
   const auto srcLayout = src.currentLayout;
-  device->submitOneShot(
+  co_await device
+      ->schedule<concurrency::pool::coroutine::policy::Queue::Enqueue>();
+  co_await device->submitOneShot(
       queue, family,
       [&src, &dst, &bufferOffset, &aspect, srcLayout](vk::CommandBuffer cmd) {
         vk::ImageSubresourceRange subresource{aspect, 0, 1, 0, 1};
@@ -276,17 +292,22 @@ void transfer(const std::shared_ptr<Device> &device, const AllocatedImage &src,
                         vk::AccessFlagBits2::eTransferRead,
                         vk::AccessFlagBits2::eMemoryRead);
       });
+  co_return;
 }
 
-void transfer(const std::shared_ptr<Device> &device, const AllocatedImage &src,
-              AllocatedImage &dst, vk::ImageLayout dstFinalLayout) {
+concurrency::pool::coroutine::CoroutineTask<
+    concurrency::pool::coroutine::policy::Suspend::Never, void>
+transfer(const std::shared_ptr<Device> &device, const AllocatedImage &src,
+         AllocatedImage &dst, vk::ImageLayout dstFinalLayout) {
   uint32_t family = 0;
   auto queue = selectQueue(device, family);
   const auto srcAspect = aspectFromFormat(src.format);
   const auto dstAspect = aspectFromFormat(dst.format);
   const auto srcLayout = src.currentLayout;
   const auto dstLayout = dst.currentLayout;
-  device->submitOneShot(
+  co_await device
+      ->schedule<concurrency::pool::coroutine::policy::Queue::Enqueue>();
+  co_await device->submitOneShot(
       queue, family,
       [&src, &dst, srcLayout, dstLayout, &dstFinalLayout, &srcAspect,
        &dstAspect](vk::CommandBuffer cmd) {
@@ -327,6 +348,7 @@ void transfer(const std::shared_ptr<Device> &device, const AllocatedImage &src,
                         vk::AccessFlagBits2::eMemoryRead);
       });
   dst.currentLayout = dstFinalLayout;
+  co_return;
 }
 
 // ===================== swapchain record‑only helpers =====================
@@ -493,15 +515,18 @@ void recordTransfer(vk::CommandBuffer cmd, vk::Image swapchainImage,
 // then a memcpy to a staging buffer on the destination device, and finally
 // a intra‑device copy to the target resource.
 
-void transfer(const std::shared_ptr<Device> &srcDevice,
-              const AllocatedBuffer &src, vk::DeviceSize srcOffset,
-              const std::shared_ptr<Device> &dstDevice, AllocatedBuffer &dst,
-              vk::DeviceSize dstOffset, vk::DeviceSize size) {
+concurrency::pool::coroutine::CoroutineTask<
+    concurrency::pool::coroutine::policy::Suspend::Never, void>
+transfer(const std::shared_ptr<Device> &srcDevice, const AllocatedBuffer &src,
+         vk::DeviceSize srcOffset, const std::shared_ptr<Device> &dstDevice,
+         AllocatedBuffer &dst, vk::DeviceSize dstOffset, vk::DeviceSize size) {
   // If we can directly map both buffers (host‑visible), just memcpy.
   // But they might be device‑local, so we stage.
   auto srcStaging = createStagingBuffer(srcDevice, size);
   // copy src -> staging (src device)
-  transfer(srcDevice, src, srcOffset, srcStaging, 0, size);
+  co_await srcDevice
+      ->schedule<concurrency::pool::coroutine::policy::Queue::Enqueue>();
+  co_await transfer(srcDevice, src, srcOffset, srcStaging, 0, size);
   // read staging to host
   void *srcData = srcStaging.map();
   srcStaging.invalidate(0, size);
@@ -515,127 +540,64 @@ void transfer(const std::shared_ptr<Device> &srcDevice,
   srcStaging.unmap();
 
   // copy staging -> dst (dst device)
-  transfer(dstDevice, dstStaging, 0, dst, dstOffset, size);
+  co_await dstDevice
+      ->schedule<concurrency::pool::coroutine::policy::Queue::Enqueue>();
+  co_await transfer(dstDevice, dstStaging, 0, dst, dstOffset, size);
+  co_return;
 }
 
-void transfer(const std::shared_ptr<Device> &srcDevice,
-              const AllocatedBuffer &src, vk::DeviceSize srcOffset,
-              const std::shared_ptr<Device> &dstDevice, AllocatedImage &dst,
-              vk::ImageLayout dstFinalLayout) {
+concurrency::pool::coroutine::CoroutineTask<
+    concurrency::pool::coroutine::policy::Suspend::Never, void>
+transfer(const std::shared_ptr<Device> &srcDevice, const AllocatedBuffer &src,
+         vk::DeviceSize srcOffset, const std::shared_ptr<Device> &dstDevice,
+         AllocatedImage &dst, vk::ImageLayout dstFinalLayout) {
   // Use a staging buffer on the source device
   vk::DeviceSize imageSize = imageDataSize(dst.format, dst.extent);
   auto staging = createStagingBuffer(srcDevice, imageSize);
   // copy src buffer -> staging (intra src device)
-  transfer(srcDevice, src, srcOffset, staging, 0, imageSize);
+  co_await srcDevice
+      ->schedule<concurrency::pool::coroutine::policy::Queue::Enqueue>();
+  co_await transfer(srcDevice, src, srcOffset, staging, 0, imageSize);
   // copy from staging to dst image via dstDevice intra‑device transfer
-  transfer(dstDevice, staging, 0, dst, dstFinalLayout);
+  co_await dstDevice
+      ->schedule<concurrency::pool::coroutine::policy::Queue::Enqueue>();
+  co_await transfer(dstDevice, staging, 0, dst, dstFinalLayout);
+  co_return;
 }
 
-void transfer(const std::shared_ptr<Device> &srcDevice,
-              const AllocatedImage &src,
-              const std::shared_ptr<Device> &dstDevice, AllocatedBuffer &dst,
-              vk::DeviceSize dstOffset) {
+concurrency::pool::coroutine::CoroutineTask<
+    concurrency::pool::coroutine::policy::Suspend::Never, void>
+transfer(const std::shared_ptr<Device> &srcDevice, const AllocatedImage &src,
+         const std::shared_ptr<Device> &dstDevice, AllocatedBuffer &dst,
+         vk::DeviceSize dstOffset) {
   vk::DeviceSize imageSize = imageDataSize(src.format, src.extent);
   auto staging = createStagingBuffer(srcDevice, imageSize);
   // intra src device: image -> staging buffer
-  transfer(srcDevice, src, staging, 0);
+  co_await srcDevice
+      ->schedule<concurrency::pool::coroutine::policy::Queue::Enqueue>();
+  co_await transfer(srcDevice, src, staging, 0);
   // copy staging -> dst buffer via dstDevice intra‑device
-  transfer(dstDevice, staging, 0, dst, dstOffset, imageSize);
+  co_await dstDevice
+      ->schedule<concurrency::pool::coroutine::policy::Queue::Enqueue>();
+  co_await transfer(dstDevice, staging, 0, dst, dstOffset, imageSize);
+  co_return;
 }
 
-void transfer(const std::shared_ptr<Device> &srcDevice,
-              const AllocatedImage &src,
-              const std::shared_ptr<Device> &dstDevice, AllocatedImage &dst,
-              vk::ImageLayout dstFinalLayout) {
+concurrency::pool::coroutine::CoroutineTask<
+    concurrency::pool::coroutine::policy::Suspend::Never, void>
+transfer(const std::shared_ptr<Device> &srcDevice, const AllocatedImage &src,
+         const std::shared_ptr<Device> &dstDevice, AllocatedImage &dst,
+         vk::ImageLayout dstFinalLayout) {
   vk::DeviceSize imageSize = imageDataSize(src.format, src.extent);
   auto staging = createStagingBuffer(srcDevice, imageSize);
-  transfer(srcDevice, src, staging, 0);
-  transfer(dstDevice, staging, 0, dst, dstFinalLayout);
-}
+  co_await srcDevice
+      ->schedule<concurrency::pool::coroutine::policy::Queue::Enqueue>();
+  co_await transfer(srcDevice, src, staging, 0);
 
-// ---------- async variants ----------
-
-std::future<void> transferAsync(std::shared_ptr<Device> device,
-                                std::shared_ptr<AllocatedBuffer> src,
-                                vk::DeviceSize srcOffset,
-                                std::shared_ptr<AllocatedBuffer> dst,
-                                vk::DeviceSize dstOffset, vk::DeviceSize size) {
-  return device->submit([&src, srcOffset, &dst, dstOffset, size, &device]() {
-    transfer(device, *src, srcOffset, *dst, dstOffset, size);
-  });
-}
-
-std::future<void> transferAsync(std::shared_ptr<Device> device,
-                                std::shared_ptr<AllocatedBuffer> src,
-                                vk::DeviceSize bufferOffset,
-                                std::shared_ptr<AllocatedImage> dst,
-                                vk::ImageLayout dstFinalLayout) {
-  return device->submit([&src, bufferOffset, &dst, dstFinalLayout, &device]() {
-    transfer(device, *src, bufferOffset, *dst, dstFinalLayout);
-  });
-}
-
-std::future<void> transferAsync(std::shared_ptr<Device> device,
-                                std::shared_ptr<AllocatedImage> src,
-                                std::shared_ptr<AllocatedBuffer> dst,
-                                vk::DeviceSize bufferOffset) {
-  return device->submit([&src, &dst, bufferOffset, &device]() {
-    transfer(device, *src, *dst, bufferOffset);
-  });
-}
-
-std::future<void> transferAsync(std::shared_ptr<Device> device,
-                                std::shared_ptr<AllocatedImage> src,
-                                std::shared_ptr<AllocatedImage> dst,
-                                vk::ImageLayout dstFinalLayout) {
-  return device->submit([&src, &dst, dstFinalLayout, &device]() {
-    transfer(device, *src, *dst, dstFinalLayout);
-  });
-}
-
-std::future<void> transferAsync(std::shared_ptr<Device> srcDevice,
-                                std::shared_ptr<AllocatedBuffer> src,
-                                vk::DeviceSize srcOffset,
-                                std::shared_ptr<Device> dstDevice,
-                                std::shared_ptr<AllocatedBuffer> dst,
-                                vk::DeviceSize dstOffset, vk::DeviceSize size) {
-  return srcDevice->submit(
-      [&srcDevice, &src, srcOffset, &dstDevice, &dst, dstOffset, size]() {
-        transfer(srcDevice, *src, srcOffset, dstDevice, *dst, dstOffset, size);
-      });
-}
-
-std::future<void> transferAsync(std::shared_ptr<Device> srcDevice,
-                                std::shared_ptr<AllocatedBuffer> src,
-                                vk::DeviceSize srcOffset,
-                                std::shared_ptr<Device> dstDevice,
-                                std::shared_ptr<AllocatedImage> dst,
-                                vk::ImageLayout dstFinalLayout) {
-  return srcDevice->submit(
-      [&srcDevice, &src, srcOffset, &dstDevice, &dst, dstFinalLayout]() {
-        transfer(srcDevice, *src, srcOffset, dstDevice, *dst, dstFinalLayout);
-      });
-}
-
-std::future<void> transferAsync(std::shared_ptr<Device> srcDevice,
-                                std::shared_ptr<AllocatedImage> src,
-                                std::shared_ptr<Device> dstDevice,
-                                std::shared_ptr<AllocatedBuffer> dst,
-                                vk::DeviceSize dstOffset) {
-  return srcDevice->submit([&srcDevice, &src, &dstDevice, &dst, dstOffset]() {
-    transfer(srcDevice, *src, dstDevice, *dst, dstOffset);
-  });
-}
-
-std::future<void> transferAsync(std::shared_ptr<Device> srcDevice,
-                                std::shared_ptr<AllocatedImage> src,
-                                std::shared_ptr<Device> dstDevice,
-                                std::shared_ptr<AllocatedImage> dst,
-                                vk::ImageLayout dstFinalLayout) {
-  return srcDevice->submit(
-      [&srcDevice, &src, &dstDevice, &dst, dstFinalLayout]() {
-        transfer(srcDevice, *src, dstDevice, *dst, dstFinalLayout);
-      });
+  co_await dstDevice
+      ->schedule<concurrency::pool::coroutine::policy::Queue::Enqueue>();
+  co_await transfer(dstDevice, staging, 0, dst, dstFinalLayout);
+  co_return;
 }
 
 } // namespace graphics::vulkan::devices

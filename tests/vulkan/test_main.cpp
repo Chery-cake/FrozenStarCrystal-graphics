@@ -148,10 +148,10 @@ int main() {
 
     // 12. Allocate command buffers and record dynamic rendering commands
     auto &cmdPool = device->getGraphicsPool();
-    cmdPool.allocate(imagesCount);
+    cmdPool.allocatePrimary(imagesCount);
     std::vector<vk::CommandBuffer> commandBuffers;
     for (uint32_t i = 0; i < imagesCount; ++i)
-      commandBuffers.push_back(*cmdPool.buffers[i]);
+      commandBuffers.push_back(*cmdPool.primary[i]);
 
     for (uint32_t i = 0; i < imagesCount; ++i) {
       vk::CommandBuffer cmd = commandBuffers[i];

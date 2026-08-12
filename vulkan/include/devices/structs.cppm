@@ -10,6 +10,9 @@ import vk_mem_alloc;
 
 export namespace graphics::vulkan::devices {
 
+class Device;
+class Swapchain;
+
 struct FROZENSTARCRYSTAL_GRAPHICS_API QueueFamilyIndices {
   std::optional<uint32_t> graphicsQueue;
   std::optional<uint32_t> computeQueue;
@@ -50,8 +53,6 @@ struct FROZENSTARCRYSTAL_GRAPHICS_API GPUInfo {
 
   constexpr auto operator<=>(const GPUInfo &) const noexcept = default;
 };
-
-class Swapchain;
 
 struct FROZENSTARCRYSTAL_GRAPHICS_API WindowInfo {
   std::unique_ptr<vk::raii::SurfaceKHR> surface;
@@ -200,10 +201,17 @@ struct FROZENSTARCRYSTAL_GRAPHICS_API CommandPoolCreateInfo {
 };
 
 struct FROZENSTARCRYSTAL_GRAPHICS_API CommandBufferPool {
+public:
   std::unique_ptr<vk::raii::CommandPool> pool;
-  std::vector<vk::raii::CommandBuffer> buffers;
+  std::vector<vk::raii::CommandBuffer> primary;
+  std::vector<vk::raii::CommandBuffer> secondary;
   std::shared_ptr<vk::raii::Device> device;
 
+private:
+  std::vector<vk::raii::CommandBuffer> freePrimary;
+  std::vector<vk::raii::CommandBuffer> freeSecondary;
+
+public:
   CommandBufferPool(const std::shared_ptr<vk::raii::Device> &devicePtr,
                     const CommandPoolCreateInfo &createInfo) {
     vk::CommandPoolCreateInfo info = {createInfo.flags, createInfo.queueFamily};
@@ -218,20 +226,140 @@ struct FROZENSTARCRYSTAL_GRAPHICS_API CommandBufferPool {
   CommandBufferPool(CommandBufferPool &&) noexcept = default;
   CommandBufferPool &operator=(CommandBufferPool &&) noexcept = default;
 
-  void reset() {
-    buffers.clear();
-    pool->reset();
-  }
-
-  void allocate(uint32_t count) {
+  void allocatePrimary(uint32_t count) {
     vk::CommandBufferAllocateInfo allocInfo{
         *pool, vk::CommandBufferLevel::ePrimary, count};
 
-    buffers = device->allocateCommandBuffers(allocInfo);
+    std::ranges::transform(device->allocateCommandBuffers(allocInfo),
+                           std::back_inserter(primary),
+                           [](auto &buf) { return std::move(buf); });
   }
-  void allocate(vk::CommandBufferAllocateInfo &allocInfo) {
-    buffers = device->allocateCommandBuffers(allocInfo);
+  void allocateSecondery(uint32_t count) {
+    vk::CommandBufferAllocateInfo allocInfo{
+        *pool, vk::CommandBufferLevel::eSecondary, count};
+    std::ranges::transform(device->allocateCommandBuffers(allocInfo),
+                           std::back_inserter(secondary),
+                           [](auto &buf) { return std::move(buf); });
   }
+
+  vk::raii::CommandBuffer acquirePrimary() {
+    if (!freePrimary.empty()) {
+      auto cmd = std::move(freePrimary.back());
+      freePrimary.pop_back();
+      return cmd;
+    }
+    // Allocate a single new buffer from the pool.
+    allocatePrimary(1);
+    auto cmd = std::move(primary.back());
+    primary.pop_back();
+    return cmd;
+  }
+
+  vk::raii::CommandBuffer acquireSecondary() {
+    if (!freeSecondary.empty()) {
+      auto cmd = std::move(freeSecondary.back());
+      freeSecondary.pop_back();
+      return cmd;
+    }
+    // Allocate a single new buffer from the pool.
+    allocateSecondery(1);
+    auto cmd = std::move(secondary.back());
+    secondary.pop_back();
+    return cmd;
+  }
+
+  void releasePrimary(vk::raii::CommandBuffer cmd) {
+    try {
+      cmd.reset(); // calls vkResetCommandBuffer
+    } catch (vk::Error &e) {
+      std::cout << "Couldn't reset primary command buffer: " << e.what()
+                << '\n';
+    }
+    primary.push_back(std::move(cmd));
+  }
+
+  void releaseSeconday(vk::raii::CommandBuffer cmd) {
+    try {
+      cmd.reset(); // calls vkResetCommandBuffer
+    } catch (vk::Error &e) {
+      std::cout << "Couldn't reset secondary command buffer: " << e.what()
+                << '\n';
+    }
+    secondary.push_back(std::move(cmd));
+  }
+};
+
+struct CommandBufferHandle {
+  std::reference_wrapper<CommandBufferPool> pool;
+  vk::raii::CommandBuffer buffer = nullptr;
+  operator vk::CommandBuffer() const { return *buffer; }
+
+  CommandBufferHandle(std::reference_wrapper<CommandBufferPool> pool)
+      : pool(pool) {
+    buffer = pool.get().acquirePrimary();
+  }
+
+  ~CommandBufferHandle() {
+    if (buffer != nullptr) { // not moved‑from
+      pool.get().releasePrimary(std::move(buffer));
+    }
+  }
+  // move‑only
+  CommandBufferHandle(CommandBufferHandle &&) = default;
+  CommandBufferHandle &operator=(CommandBufferHandle &&) = default;
+};
+
+struct FROZENSTARCRYSTAL_GRAPHICS_API FenceWaiter {
+  struct CoroutineSubmission {
+    vk::raii::Fence fence;
+    CommandBufferHandle cmdBuffer;
+    std::coroutine_handle<> continuation;
+  };
+
+  std::jthread fenceWaiter;
+  std::once_flag start;
+
+  std::unordered_map<std::shared_ptr<Device>, std::vector<CoroutineSubmission>>
+      submissions;
+
+  std::mutex mtx;
+
+  FenceWaiter() {
+    std::call_once(start, [&]() { loop(); });
+  }
+  ~FenceWaiter() {
+    fenceWaiter.request_stop();
+    if (fenceWaiter.joinable()) {
+      fenceWaiter.join();
+    }
+  }
+
+  void enqueueFence(const std::shared_ptr<Device> &device,
+                    vk::raii::Fence fence, CommandBufferHandle cmd,
+                    std::coroutine_handle<> continuation) {
+
+    std::unique_lock lock(mtx);
+    submissions[device].emplace_back(std::move(fence), std::move(cmd),
+                                     continuation);
+  }
+
+private:
+  void loop();
+};
+
+struct FenceAwaiter {
+  FenceWaiter &waiter;
+  std::shared_ptr<Device> device;
+  vk::raii::Fence fence;
+  CommandBufferHandle cmdBuffer;
+
+  static bool await_ready() noexcept { return false; }
+
+  void await_suspend(std::coroutine_handle<> h) {
+    waiter.enqueueFence(device, std::move(fence), std::move(cmdBuffer), h);
+  }
+
+  void await_resume() const noexcept {}
 };
 
 } // namespace graphics::vulkan::devices
