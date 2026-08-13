@@ -54,9 +54,6 @@ private:
   std::unordered_map<std::shared_ptr<devices::WindowInfo>, WindowCmdData>
       frameCmdPools_;
 
-  std::shared_ptr<devices::Device> findDeviceForWindow(
-      const std::shared_ptr<devices::WindowInfo> &windowInfo) const;
-
 public:
   Api(const std::shared_ptr<concurrency::pool::Manager> &poolManager);
   ~Api();
@@ -158,6 +155,9 @@ public:
     }
     return entries.front().device;
   }
+
+  [[nodiscard]] std::shared_ptr<devices::Device> findDeviceForWindow(
+      const std::shared_ptr<devices::WindowInfo> &windowInfo) const;
 };
 
 } // namespace graphics::vulkan

@@ -41,19 +41,6 @@ Api::~Api() {
   std::cout << "[Api] Cleared\n";
 }
 
-std::shared_ptr<devices::Device> Api::findDeviceForWindow(
-    const std::shared_ptr<devices::WindowInfo> &windowInfo) const {
-  auto entries = deviceManager_->getDeviceEntries();
-
-  auto it = std::ranges::find_if(
-      entries, [&windowInfo](const devices::Manager::DeviceEntry &entry) {
-        auto windows = entry.device->getWindows();
-        return std::ranges::find(windows, windowInfo) != windows.end();
-      });
-
-  return it != entries.end() ? it->device : nullptr;
-}
-
 WindowFrame
 Api::beginFrame(const std::shared_ptr<devices::Device> &device,
                 const std::shared_ptr<devices::WindowInfo> &windowInfo) {
@@ -316,6 +303,19 @@ Api::createPipeline(const pipelines::ComputePipelineInfo &info,
         .message = "No Vulkan device available"});
   }
   return pipelineManager_->getOrCreate(info, dev->getDevicePtr());
+}
+
+std::shared_ptr<devices::Device> Api::findDeviceForWindow(
+    const std::shared_ptr<devices::WindowInfo> &windowInfo) const {
+  auto entries = deviceManager_->getDeviceEntries();
+
+  auto it = std::ranges::find_if(
+      entries, [&windowInfo](const devices::Manager::DeviceEntry &entry) {
+        auto windows = entry.device->getWindows();
+        return std::ranges::find(windows, windowInfo) != windows.end();
+      });
+
+  return it != entries.end() ? it->device : nullptr;
 }
 
 } // namespace graphics::vulkan
