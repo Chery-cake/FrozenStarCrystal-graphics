@@ -415,7 +415,7 @@ Manager::getOrCreate(const DynamicPipelineInfo &info,
   }
 
   std::unique_lock lock(entry->entryMtx);
-  auto [it, inserted] = entry->dynamicPipelines.emplace(info.tag, *pipeline);
+  auto [it, inserted] = entry->dynamicPipelines.emplace(info, *pipeline);
   return it->second;
 }
 
@@ -455,7 +455,7 @@ Manager::getOrCreate(const StaticPipelineInfo &info,
   }
 
   std::unique_lock lock(entry->entryMtx);
-  auto [it, inserted] = entry->staticPipelines.emplace(info.tag, *pipeline);
+  auto [it, inserted] = entry->staticPipelines.emplace(info, *pipeline);
   return it->second;
 }
 
