@@ -62,12 +62,9 @@ int main() {
         std::make_unique<vk::raii::SurfaceKHR>(*instancePtr, rawSurface);
 
     // 4. Pick a device (the one with the highest score)
+    auto pMan = std::make_shared<concurrency::pool::Manager>();
 
-    static concurrency::pool::Pool gpuPool{.name = "gpuPool"};
-    concurrency::pool::Manager pMan;
-    pMan.createPool(&gpuPool, 2);
-
-    devices::Manager deviceManager(instancePtr, pMan.getPool(&gpuPool).lock());
+    devices::Manager deviceManager(instancePtr, pMan);
     auto entries = deviceManager.getDeviceEntries();
     if (entries.empty())
       throw std::runtime_error("No Vulkan device found");

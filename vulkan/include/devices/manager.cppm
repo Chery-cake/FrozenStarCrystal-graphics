@@ -13,112 +13,112 @@ import concurrency;
 
 export namespace graphics::vulkan::devices {
 
+inline constexpr concurrency::pool::Pool gpuPoolDesc{.name = "gpuPool"};
+
 class FROZENSTARCRYSTAL_GRAPHICS_API Manager {
-  public:
-    struct DeviceEntry {
-        GPUInfo info;
-        std::shared_ptr<Device> device;
-        std::shared_ptr<vk::raii::PhysicalDevice> physicalDevice;
-        uint32_t score = 0;
-    };
+public:
+  struct DeviceEntry {
+    GPUInfo info;
+    std::shared_ptr<Device> device;
+    std::shared_ptr<vk::raii::PhysicalDevice> physicalDevice;
+    uint32_t score = 0;
+  };
 
-  private:
-    std::shared_ptr<vk::raii::Instance> instance_;
+private:
+  std::shared_ptr<vk::raii::Instance> instance_;
 
-    std::vector<DeviceEntry> deviceEntries_;
+  std::vector<DeviceEntry> deviceEntries_;
 
-    std::shared_ptr<concurrency::pool::ThreadPool> gpuPool_;
+  std::shared_ptr<concurrency::pool::ThreadPool> gpuPool_;
 
-    mutable std::mutex mtx_;
+  mutable std::mutex mtx_;
 
-  public:
-    Manager(const std::shared_ptr<vk::raii::Instance> &instance,
-            const std::shared_ptr<concurrency::pool::ThreadPool> &gpuPool);
-    ~Manager();
+public:
+  Manager(const std::shared_ptr<vk::raii::Instance> &instance,
+          const std::shared_ptr<concurrency::pool::Manager> &poolManager);
+  ~Manager();
 
-    Manager(const Manager &) = delete;
-    Manager &operator=(const Manager &) = delete;
-    Manager(Manager &&) = delete;
-    Manager &operator=(Manager &&) = delete;
+  Manager(const Manager &) = delete;
+  Manager &operator=(const Manager &) = delete;
+  Manager(Manager &&) = delete;
+  Manager &operator=(Manager &&) = delete;
 
-    [[nodiscard]] std::vector<DeviceEntry> getDeviceEntries() {
-        std::unique_lock lock(mtx_);
-        return deviceEntries_;
+  [[nodiscard]] std::vector<DeviceEntry> getDeviceEntries() {
+    std::unique_lock lock(mtx_);
+    return deviceEntries_;
+  }
+  [[nodiscard]] std::optional<DeviceEntry> getEntry(uint32_t index) {
+    std::unique_lock lock(mtx_);
+    if (index >= deviceEntries_.size()) {
+      return std::nullopt;
     }
-    [[nodiscard]] std::optional<DeviceEntry> getEntry(uint32_t index) {
-        std::unique_lock lock(mtx_);
-        if (index >= deviceEntries_.size()) {
-            return std::nullopt;
-        }
-        return deviceEntries_[index];
+    return deviceEntries_[index];
+  }
+  [[nodiscard]] std::optional<DeviceEntry> getEntry(GPUInfo &info) {
+    std::unique_lock lock(mtx_);
+    auto it =
+        std::ranges::find_if(deviceEntries_, [&info](const DeviceEntry &entry) {
+          return entry.info == info;
+        });
+    if (it != deviceEntries_.end()) {
+      return *it;
     }
-    [[nodiscard]] std::optional<DeviceEntry> getEntry(GPUInfo &info) {
-        std::unique_lock lock(mtx_);
-        auto it = std::ranges::find_if(
-            deviceEntries_,
-            [&info](const DeviceEntry &entry) { return entry.info == info; });
-        if (it != deviceEntries_.end()) {
-            return *it;
-        }
-        return std::nullopt;
+    return std::nullopt;
+  }
+  [[nodiscard]] std::optional<DeviceEntry> getEntryGPUId(uint32_t id) {
+    std::unique_lock lock(mtx_);
+    auto it =
+        std::ranges::find_if(deviceEntries_, [&id](const DeviceEntry &entry) {
+          return entry.info.deviceId == id;
+        });
+    if (it != deviceEntries_.end()) {
+      return *it;
     }
-    [[nodiscard]] std::optional<DeviceEntry> getEntryGPUId(uint32_t id) {
-        std::unique_lock lock(mtx_);
-        auto it = std::ranges::find_if(deviceEntries_,
-                                       [&id](const DeviceEntry &entry) {
-                                           return entry.info.deviceId == id;
-                                       });
-        if (it != deviceEntries_.end()) {
-            return *it;
-        }
-        return std::nullopt;
-    }
-    [[nodiscard]] std::vector<DeviceEntry> getDevicesWithWindows() {
-        std::unique_lock lock(mtx_);
-        return deviceEntries_ |
-               std::views::filter([](const DeviceEntry &entry) {
-                   return entry.device->getWindows().size() > 0;
-               }) |
-               std::ranges::to<std::vector<DeviceEntry>>();
-    }
-    [[nodiscard]] std::vector<DeviceEntry> getDevicesWithoutWindows() {
-        std::unique_lock lock(mtx_);
-        return deviceEntries_ |
-               std::views::filter([](const DeviceEntry &entry) {
-                   return entry.device->getWindows().size() == 0;
-               }) |
-               std::ranges::to<std::vector<DeviceEntry>>();
+    return std::nullopt;
+  }
+  [[nodiscard]] std::vector<DeviceEntry> getDevicesWithWindows() {
+    std::unique_lock lock(mtx_);
+    return deviceEntries_ | std::views::filter([](const DeviceEntry &entry) {
+             return entry.device->getWindows().size() > 0;
+           }) |
+           std::ranges::to<std::vector<DeviceEntry>>();
+  }
+  [[nodiscard]] std::vector<DeviceEntry> getDevicesWithoutWindows() {
+    std::unique_lock lock(mtx_);
+    return deviceEntries_ | std::views::filter([](const DeviceEntry &entry) {
+             return entry.device->getWindows().size() == 0;
+           }) |
+           std::ranges::to<std::vector<DeviceEntry>>();
+  }
+
+  template <concurrency::pool::coroutine::policy::Queue QP =
+                concurrency::pool::coroutine::policy::Queue::Inline>
+  [[nodiscard]] concurrency::pool::coroutine::Scheduler<QP>
+  scheduleOnDevice(uint32_t deviceIndex) {
+    std::unique_lock lock(mtx_);
+    return deviceEntries_.at(deviceIndex).device->schedule<QP>();
+  }
+
+  template <typename F>
+  [[nodiscard]] std::vector<std::future<void>> broadcastToAllDevices(F &&fn) {
+    std::vector<std::shared_ptr<Device>> devices;
+    {
+      std::unique_lock lock(mtx_);
+      devices.reserve(deviceEntries_.size());
+
+      std::ranges::transform(deviceEntries_, std::back_inserter(devices),
+                             [](const auto &entry) { return entry.device; });
     }
 
-    template <concurrency::pool::coroutine::policy::Queue QP =
-                  concurrency::pool::coroutine::policy::Queue::Inline>
-    [[nodiscard]] concurrency::pool::coroutine::Scheduler<QP>
-    scheduleOnDevice(uint32_t deviceIndex) {
-        std::unique_lock lock(mtx_);
-        return deviceEntries_.at(deviceIndex).device->schedule<QP>();
-    }
+    std::vector<std::future<void>> futures;
+    futures.reserve(devices.size());
 
-    template <typename F>
-    [[nodiscard]] std::vector<std::future<void>> broadcastToAllDevices(F &&fn) {
-        std::vector<std::shared_ptr<Device>> devices;
-        {
-            std::unique_lock lock(mtx_);
-            devices.reserve(deviceEntries_.size());
-
-            std::ranges::transform(
-                deviceEntries_, std::back_inserter(devices),
-                [](const auto &entry) { return entry.device; });
-        }
-
-        std::vector<std::future<void>> futures;
-        futures.reserve(devices.size());
-
-        std::ranges::transform(
-            devices, std::back_inserter(futures), [&fn](const auto &device) {
-                return device->submit([fn]() mutable { std::invoke(fn); });
-            });
-        return futures;
-    }
+    std::ranges::transform(
+        devices, std::back_inserter(futures), [&fn](const auto &device) {
+          return device->submit([fn]() mutable { std::invoke(fn); });
+        });
+    return futures;
+  }
 };
 
 } // namespace graphics::vulkan::devices

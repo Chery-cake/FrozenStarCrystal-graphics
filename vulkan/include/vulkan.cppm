@@ -8,5 +8,3 @@ export import graphics.vulkan.shaders;
 export import graphics.vulkan.pipelines;
 export import graphics.vulkan.media;
 export import graphics.vulkan.compositors;
-
-export import :api;

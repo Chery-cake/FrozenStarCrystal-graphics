@@ -22,11 +22,25 @@ using SceneTaskFactory =
 
 template <RenderTargetPolicy Target>
 class FROZENSTARCRYSTAL_GRAPHICS_API Compositor {
+public:
+  struct SceneEntry {
+    SceneId id;
+    SceneTaskFactory factory;
+  };
+
+  enum class Position {
+    START,
+    END,
+  };
+
 private:
   std::shared_ptr<devices::Device> device_;
 
   Target target_;
-  std::vector<SceneTaskFactory> sceneFactories_;
+  std::vector<SceneEntry> sceneEntries_;
+
+  SceneId nextSceneId_{1};
+  mutable std::mutex mtx_;
 
 public:
   explicit Compositor(Target &&target,
@@ -34,11 +48,18 @@ public:
 
   // Add a scene. The scene must satisfy the Scene concept.
   // We type-erase it into a callable.
-  template <Scene S> void addScene(S &&scene);
+  template <Scene S> SceneId addScene(S &&scene);
+  template <Scene S> SceneId addScene(S &&scene, Position pos);
 
   // Remove a scene? Type-erasure makes this hard; typical approach is to
   // rebuild the vector or use an ID system. For now, provide clearScenes().
-  void clearSceneFactories() { sceneFactories_.clear(); }
+  void clearSceneFactories() {
+    std::unique_lock lock(mtx_);
+    sceneEntries_.clear();
+  }
+
+  bool removeScene(const SceneId &id);
+  bool removeScenes(const std::span<const SceneId> &ids);
 
   // Render all scenes in vector order.
   concurrency::pool::coroutine::CoroutineTask<

@@ -1,9 +1,4 @@
-import graphics;
-import std.compat;
-import vulkan;
-import vk_mem_alloc;
-
-import concurrency;
+import vulkan_helper;
 
 #include <vulkan/vulkan.h>
 #define GLFW_INCLUDE_NONE
@@ -82,7 +77,7 @@ constexpr vk::DeviceSize vbSize = 3 * sizeof(Std430Vertex); // 96 bytes
 // =========================================================================
 // testInstanceHelpers
 // =========================================================================
-static void testInstanceHelpers(Api &backend) {
+static void testInstanceHelpers(instances::Instance &instance) {
   auto exts = instances::Instance::getAvailableExtensions();
   checkMsg(!exts.empty(), "getAvailableExtensions() returned empty");
 
@@ -97,11 +92,11 @@ static void testInstanceHelpers(Api &backend) {
   checkMsg(!missingLayers.empty(),
            "checkLayerSupport: absent layer must be in returned vector");
 
-  checkMsg(backend.getInstance().getInstance() != vk::Instance{},
+  checkMsg(instance.getInstance() != vk::Instance{},
            "getInstance() handle is null");
 
-  backend.getInstance().getRaiiInstance(); // no crash
-  backend.getInstance().getRaiiContext();  // no crash
+  (void)instance.getRaiiInstance(); // no crash
+  (void)instance.getRaiiContext();  // no crash
 
   std::cout << "[PASS] testInstanceHelpers\n";
 }
@@ -140,22 +135,21 @@ static void testConfig() {
 // =========================================================================
 // testDeviceManager
 // =========================================================================
-static void testDeviceManager(Api &backend) {
-  auto entries = backend.getDeviceManager().getDeviceEntries();
+static void testDeviceManager(devices::Manager &deviceManager) {
+  auto entries = deviceManager.getDeviceEntries();
   checkMsg(!entries.empty(), "getDeviceEntries() returned empty");
 
-  auto entry0 = backend.getDeviceManager().getEntry(0u);
+  auto entry0 = deviceManager.getEntry(0u);
   checkMsg(entry0.has_value(), "getEntry(0) has no value");
 
-  auto byId = backend.getDeviceManager().getEntryGPUId(entry0->info.deviceId);
+  auto byId = deviceManager.getEntryGPUId(entry0->info.deviceId);
   checkMsg(byId.has_value(), "getEntryGPUId() returned nullopt");
 
-  backend.getDeviceManager().getDevicesWithWindows();    // no crash
-  backend.getDeviceManager().getDevicesWithoutWindows(); // no crash
+  (void)deviceManager.getDevicesWithWindows();    // no crash
+  (void)deviceManager.getDevicesWithoutWindows(); // no crash
 
   std::atomic<int> count{0};
-  auto futures =
-      backend.getDeviceManager().broadcastToAllDevices([&count] { ++count; });
+  auto futures = deviceManager.broadcastToAllDevices([&count] { ++count; });
   for (auto &f : futures) {
     f.get();
   }
@@ -168,8 +162,8 @@ static void testDeviceManager(Api &backend) {
 // =========================================================================
 // testDeviceAccessors
 // =========================================================================
-static void testDeviceAccessors(Api &backend) {
-  auto dev = backend.getFirstDevice();
+static void testDeviceAccessors(std::shared_ptr<devices::Device> dev) {
+  checkMsg(dev != nullptr, "Device is null");
   checkMsg(dev != nullptr, "getFirstDevice() returned nullptr");
 
   checkMsg(dev->getDevice() != vk::Device{}, "getDevice() handle is null");
@@ -204,8 +198,7 @@ static void testDeviceAccessors(Api &backend) {
 // =========================================================================
 // testBufferImageAllocation
 // =========================================================================
-static void testBufferImageAllocation(Api &backend) {
-  auto dev = backend.getFirstDevice();
+static void testBufferImageAllocation(std::shared_ptr<devices::Device> dev) {
   checkMsg(dev != nullptr, "getFirstDevice() returned nullptr");
 
   using Access = devices::BufferCreateInfo::Access;
@@ -264,8 +257,7 @@ static void testTransferHelpers() {
 // =========================================================================
 // testBufferTransfer
 // =========================================================================
-static void testBufferTransfer(Api &backend) {
-  auto dev = backend.getFirstDevice();
+static void testBufferTransfer(std::shared_ptr<devices::Device> dev) {
   checkMsg(dev != nullptr, "getFirstDevice() returned nullptr");
 
   using Access = devices::BufferCreateInfo::Access;
@@ -313,8 +305,7 @@ static void testBufferTransfer(Api &backend) {
 // =========================================================================
 // testImageTransfers
 // =========================================================================
-static void testImageTransfers(Api &backend) {
-  auto dev = backend.getFirstDevice();
+static void testImageTransfers(std::shared_ptr<devices::Device> dev) {
   checkMsg(dev != nullptr, "getFirstDevice() returned nullptr");
 
   constexpr uint32_t W = 4, H = 4;
@@ -377,8 +368,7 @@ static void testImageTransfers(Api &backend) {
 // =========================================================================
 // testAsyncTransfer
 // =========================================================================
-static void testAsyncTransfer(Api &backend) {
-  auto dev = backend.getFirstDevice();
+static void testAsyncTransfer(std::shared_ptr<devices::Device> dev) {
   checkMsg(dev != nullptr, "getFirstDevice() returned nullptr");
 
   using Access = devices::BufferCreateInfo::Access;
@@ -458,23 +448,21 @@ testSwapchainAccessors(const std::shared_ptr<devices::WindowInfo> &windowInfo,
 // =========================================================================
 // testShaderManager
 // =========================================================================
-static void testShaderManager(Api &backend) {
-  auto dev = backend.getFirstDevice();
+static void testShaderManager(std::shared_ptr<devices::Device> dev,
+                              std::shared_ptr<shaders::Manager> manager) {
   checkMsg(dev != nullptr, "getFirstDevice() returned nullptr");
 
-  auto result =
-      backend.getShaderManager().loadShader(&g_shader, dev->getDevicePtr());
+  auto result = manager->loadShader(&g_shader, dev->getDevicePtr());
   if (result) {
     checkMsg(*result != nullptr, "loadShader returned null module");
 
-    auto mod =
-        backend.getShaderManager().getModule(&g_shader, dev->getDevicePtr());
+    auto mod = manager->getModule(&g_shader, dev->getDevicePtr());
     // mod may be null if device registry race, just call it
     (void)mod;
 
-    backend.getShaderManager().unloadShader(&g_shader, dev->getDevicePtr());
+    manager->unloadShader(&g_shader, dev->getDevicePtr());
 
-    backend.reloadShader(&g_shader);
+    manager->reloadShader(&g_shader);
     std::cout << "[PASS] testShaderManager\n";
   } else {
     std::cout << "[INFO] testShaderManager: loadShader failed ("
@@ -482,7 +470,7 @@ static void testShaderManager(Api &backend) {
   }
 
   // Always safe to call
-  backend.getShaderManager().unloadShaderAllDevice(&g_shader);
+  manager->unloadShaderAllDevice(&g_shader);
   std::cout << "[PASS] testShaderManager (unloadShaderAllDevice)\n";
 }
 
@@ -490,9 +478,9 @@ static void testShaderManager(Api &backend) {
 // testPipelineManager
 // =========================================================================
 static void
-testPipelineManager(Api &backend,
+testPipelineManager(std::shared_ptr<pipelines::Manager> pipelineManager,
+                    std::shared_ptr<devices::Device> dev,
                     const std::shared_ptr<devices::WindowInfo> &windowInfo) {
-  auto dev = backend.getFirstDevice();
   checkMsg(dev != nullptr, "getFirstDevice() returned nullptr");
 
   // --- Dynamic graphics pipeline ---
@@ -521,7 +509,7 @@ testPipelineManager(Api &backend,
       .attachments = {.color = {colorFormat}},
       .colorBlendAttachments = {colorBlend}};
 
-  auto pipeResult = backend.createPipeline(dynInfo);
+  auto pipeResult = pipelineManager->getOrCreate(dynInfo, dev->getDevicePtr());
   if (!pipeResult) {
     std::cout
         << "[SKIP] testPipelineManager: dynamic pipeline creation failed ("
@@ -529,7 +517,8 @@ testPipelineManager(Api &backend,
   } else {
     checkMsg(*pipeResult != nullptr, "createPipeline(dynamic) returned null");
     // Second call should return cached same pointer
-    auto pipeResult2 = backend.createPipeline(dynInfo);
+    auto pipeResult2 =
+        pipelineManager->getOrCreate(dynInfo, dev->getDevicePtr());
     checkMsg(pipeResult2.has_value(), "second createPipeline failed");
     checkMsg(*pipeResult2 == *pipeResult, "cache hit test failed");
     std::cout << "[PASS] testPipelineManager (dynamic)\n";
@@ -566,7 +555,8 @@ testPipelineManager(Api &backend,
     staticInfo.renderPass = *renderPass;
     staticInfo.subpass = 0;
 
-    auto staticResult = backend.createPipeline(staticInfo);
+    auto staticResult =
+        pipelineManager->getOrCreate(staticInfo, dev->getDevicePtr());
     if (!staticResult) {
       std::cout << "[SKIP] testPipelineManager: static pipeline creation "
                    "failed ("
@@ -597,7 +587,7 @@ testPipelineManager(Api &backend,
   pipelines::ComputePipelineInfo compInfo{
       .tag = {.shaderTag = &g_computeShader, .layout = *compLayout}};
 
-  auto compResult = backend.createPipeline(compInfo);
+  auto compResult = pipelineManager->getOrCreate(compInfo, dev->getDevicePtr());
   if (!compResult) {
     std::cout
         << "[SKIP] testPipelineManager: compute pipeline creation failed ("
@@ -605,26 +595,28 @@ testPipelineManager(Api &backend,
   } else {
     checkMsg(*compResult != nullptr, "createPipeline(compute) returned null");
     // Cache test
-    auto compResult2 = backend.createPipeline(compInfo);
+    auto compResult2 =
+        pipelineManager->getOrCreate(compInfo, dev->getDevicePtr());
     checkMsg(compResult2.has_value(), "second compute createPipeline failed");
     checkMsg(*compResult2 == *compResult, "compute cache hit test failed");
     std::cout << "[PASS] testPipelineManager (compute)\n";
   }
 
   // Clean up invalidation
-  backend.getPipelineManager().invalidateShader(&g_shader);
-  backend.getPipelineManager().invalidateShader(&g_computeShader);
+  pipelineManager->invalidateShader(&g_shader);
+  pipelineManager->invalidateShader(&g_computeShader);
 }
 
 // =========================================================================
 // testExplicitDeviceWindow
 // =========================================================================
-static void testExplicitDeviceWindow(Api &backend, GLFWwindow *glfwWin,
-                                     uint32_t w, uint32_t h) {
-  auto dev = backend.getFirstDevice();
+static void
+testExplicitDeviceWindow(std::shared_ptr<devices::Device> dev,
+                         std::shared_ptr<instances::Instance> instance,
+                         GLFWwindow *glfwWin, uint32_t w, uint32_t h) {
   checkMsg(dev != nullptr, "getFirstDevice() returned nullptr");
 
-  auto instancePtr = backend.getInstance().getInstancePtr();
+  auto instancePtr = instance->getInstancePtr();
   VkSurfaceKHR rawSurface2 = VK_NULL_HANDLE;
   if (glfwCreateWindowSurface(**instancePtr, glfwWin, nullptr, &rawSurface2) !=
       VK_SUCCESS) {
@@ -637,12 +629,15 @@ static void testExplicitDeviceWindow(Api &backend, GLFWwindow *glfwWin,
       std::make_unique<vk::raii::SurfaceKHR>(*instancePtr, rawSurface2);
   winInfo2->instance = instancePtr;
 
-  backend.createWindow(dev, winInfo2, 2, vk::Extent2D{w, h});
+  devices::Swapchain::SwapchainInfo swapInfo2;
+  swapInfo2.extent = vk::Extent2D{w, h};
+  dev->createWindow(winInfo2, 2, swapInfo2);
+
   checkMsg(winInfo2->swapchain != nullptr,
            "testExplicitDeviceWindow: swapchain is null after createWindow");
 
-  backend.waitIdle();
-  backend.removeWindow(winInfo2);
+  dev->waitIdle();
+  dev->removeWindow(winInfo2);
 
   std::cout << "[PASS] testExplicitDeviceWindow\n";
 }
@@ -670,17 +665,27 @@ int main() {
     // ───────────────────────────────────────────
     auto poolManager = std::make_shared<concurrency::pool::Manager>();
 
-    graphics::GraphicsApi backend{poolManager};
+    auto instance = std::make_shared<instances::Instance>();
+    auto deviceManager = std::make_shared<devices::Manager>(
+        instance->getInstancePtr(), poolManager);
+    auto shaderManager = std::make_shared<shaders::Manager>();
+    auto pipelineManager = std::make_shared<pipelines::Manager>(
+        std::shared_ptr<shaders::Manager>(shaderManager.get(), [](auto *) {}));
 
     uint32_t extCount = 0;
     const char **glfwExts = glfwGetRequiredInstanceExtensions(&extCount);
     if (!glfwExts)
       throw std::runtime_error(
           "glfwGetRequiredInstanceExtensions returned null");
-    backend.addRequiredExtensions({glfwExts, extCount});
+
+    std::span<const char *const> exts{glfwExts, extCount};
+
+    std::ranges::for_each(exts, [](const char *ext) {
+      instances::Config::instance().addInstanceExtension(ext);
+    });
 
     // ── 3. Surface + Window registration ─────────────────────────────────
-    auto instancePtr = backend.getInstance().getInstancePtr();
+    auto instancePtr = instance->getInstancePtr();
     VkSurfaceKHR rawSurface = VK_NULL_HANDLE;
     if (glfwCreateWindowSurface(**instancePtr, window, nullptr, &rawSurface) !=
         VK_SUCCESS)
@@ -696,30 +701,37 @@ int main() {
     vk::Extent2D extent{static_cast<uint32_t>(width),
                         static_cast<uint32_t>(height)};
 
-    backend.createWindow(windowInfo, 2, extent);
+    auto entries = deviceManager->getDeviceEntries();
+    if (entries.empty()) {
+      throw std::runtime_error("[Api] No Vulkan device available");
+    }
+    auto device = entries.front().device;
+
+    // Build swapchain info with the actual size
+    devices::Swapchain::SwapchainInfo info;
+    info.extent = extent;
+    device->createWindow(windowInfo, 2, info);
 
     // ── 4. Run all tests
     // ──────────────────────────────────────────────────
-    testInstanceHelpers(backend);
+    testInstanceHelpers(*instance);
     testConfig();
-    testDeviceManager(backend);
-    testDeviceAccessors(backend);
-    testBufferImageAllocation(backend);
+    testDeviceManager(*deviceManager);
+    testDeviceAccessors(device);
+    testBufferImageAllocation(device);
     testTransferHelpers();
-    testBufferTransfer(backend);
-    testImageTransfers(backend);
-    testAsyncTransfer(backend);
-    testSwapchainAccessors(windowInfo, static_cast<uint32_t>(width),
-                           static_cast<uint32_t>(height));
-    testShaderManager(backend);
-    testPipelineManager(backend, windowInfo);
-    testExplicitDeviceWindow(backend, window, static_cast<uint32_t>(width),
-                             static_cast<uint32_t>(height));
+    testBufferTransfer(device);
+    testImageTransfers(device);
+    testAsyncTransfer(device);
+    testSwapchainAccessors(windowInfo, width, height);
+    testShaderManager(device, shaderManager);
+    testPipelineManager(pipelineManager, device, windowInfo);
+    testExplicitDeviceWindow(device, instance, window, width, height);
 
     // ── 5. Cleanup
     // ────────────────────────────────────────────────────────
-    backend.waitIdle();
-    backend.removeWindow(windowInfo);
+    device->waitIdle();
+    device->removeWindow(windowInfo);
     windowInfo.reset();
 
     glfwDestroyWindow(window);

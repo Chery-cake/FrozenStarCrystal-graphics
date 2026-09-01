@@ -173,8 +173,11 @@ enumeratePhysicalDevices(vk::raii::Instance *instance) {
 } // namespace
 
 Manager::Manager(const std::shared_ptr<vk::raii::Instance> &instance,
-                 const std::shared_ptr<concurrency::pool::ThreadPool> &gpuPool)
-    : instance_(instance), gpuPool_(gpuPool) {
+                 const std::shared_ptr<concurrency::pool::Manager> &poolManager)
+    : instance_(instance) {
+
+  bool created = poolManager->createPool(&gpuPoolDesc);
+  gpuPool_ = poolManager->getPool(&gpuPoolDesc).lock();
 
   auto infoDev = enumeratePhysicalDevices(instance.get());
 
@@ -183,7 +186,7 @@ Manager::Manager(const std::shared_ptr<vk::raii::Instance> &instance,
   }
 
   std::ranges::for_each(infoDev, [&entries = deviceEntries_, &instance,
-                                  &gpuPool](const auto &pair) {
+                                  &gpuPool = gpuPool_](const auto &pair) {
     auto &&[info, physicalDevice] = pair;
 
     auto device =
@@ -198,6 +201,10 @@ Manager::Manager(const std::shared_ptr<vk::raii::Instance> &instance,
                     [](const DeviceEntry &a, const DeviceEntry &b) {
                       return a.score > b.score;
                     });
+
+  if (created) {
+    poolManager->resizePool(&gpuPoolDesc, deviceEntries_.size());
+  }
 
   std::println("[Manager] Initialized with {} device(s)",
                deviceEntries_.size());

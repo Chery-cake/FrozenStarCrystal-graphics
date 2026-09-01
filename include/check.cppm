@@ -22,7 +22,7 @@ concept ApiCheck = requires(T &api) {
   /*  { api.beginFrame() } -> std::same_as<vulkan::WindowFrame>;
     { api.endFrame() } -> std::same_as<void>;*/
   // Sync
-  { api.waitIdle() } -> std::same_as<void>;
+  // { api.waitIdle() } -> std::same_as<void>;
 };
 
 } // namespace graphics

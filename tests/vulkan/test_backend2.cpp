@@ -1,9 +1,4 @@
-import graphics;
-import std.compat;
-import vulkan;
-import vk_mem_alloc;
-
-import concurrency;
+import vulkan_helper;
 
 #include <vulkan/vulkan.h>
 #define GLFW_INCLUDE_NONE
@@ -37,6 +32,20 @@ static void checkMsg(bool cond, const char *msg) {
   }
 }
 
+// ---------- Manual frame submission helper ----------
+static void
+submitAndPresent(const std::shared_ptr<devices::WindowInfo> &winInfo,
+                 std::shared_ptr<devices::Device> dev, vk::CommandBuffer cmd,
+                 uint32_t imageIndex) {
+  cmd.end();
+  vk::SubmitInfo submit{};
+  submit.setCommandBuffers(cmd);
+  auto queue = dev->getGraphicsQueue();
+  auto res = winInfo->swapchain->submitAndPresent(
+      queue, std::span<vk::SubmitInfo>(&submit, 1), imageIndex);
+  // ignore result
+}
+
 // Helper: create a descriptor pool, layout, and allocate a set for a single
 // storage buffer
 static std::tuple<vk::raii::DescriptorSetLayout, vk::raii::DescriptorSet,
@@ -67,6 +76,30 @@ createStorageBufferDescriptorSet(const vk::raii::Device &device,
   return {std::move(setLayout), std::move(set), std::move(pool)};
 }
 
+static std::vector<std::unique_ptr<vk::raii::ImageView>>
+createSwapchainImageViews(
+    const std::shared_ptr<devices::WindowInfo> &windowInfo,
+    const std::shared_ptr<devices::Device> &dev) {
+  auto swapInfo = windowInfo->swapchain->getinfo();
+  uint32_t count = swapInfo.imageCount;
+  std::vector<std::unique_ptr<vk::raii::ImageView>> views;
+  views.reserve(count);
+  for (uint32_t i = 0; i < count; ++i) {
+    auto data = windowInfo->swapchain->getSwapchainImageData(i);
+    if (!data)
+      continue;
+    vk::ImageViewCreateInfo viewInfo{};
+    viewInfo.image = data->image;
+    viewInfo.viewType = swapInfo.imageViewType;
+    viewInfo.format = data->format;
+    viewInfo.components = swapInfo.imageViewComponents;
+    viewInfo.subresourceRange = swapInfo.imageViewSubresourceRange;
+    views.push_back(
+        std::make_unique<vk::raii::ImageView>(*dev->getDevicePtr(), viewInfo));
+  }
+  return views;
+}
+
 // Vertex layout (std430): float2 (8) + pad[2] (8) + float3 (12) + pad (4) = 32
 // bytes
 struct Std430Vertex {
@@ -83,69 +116,76 @@ constexpr vk::DeviceSize vbSize = 3 * sizeof(Std430Vertex); // 96 bytes
 // testGraphicsLoop
 // =========================================================================
 static void
-testGraphicsLoop(Api &backend,
+testGraphicsLoop(std::shared_ptr<devices::Device> dev,
                  const std::shared_ptr<devices::WindowInfo> &windowInfo,
                  GLFWwindow *glfwWin) {
   int frameCount = 0;
   int w = 0, h = 0;
-
   for (int i = 0; i < 120; ++i) {
     glfwPollEvents();
     glfwGetFramebufferSize(glfwWin, &w, &h);
 
-    if (windowInfo->swapchain && windowInfo->swapchain->needRecreation()) {
-      Api::resizeWindow(windowInfo, static_cast<uint32_t>(w),
-                        static_cast<uint32_t>(h));
+    if (windowInfo->swapchain->needRecreation()) {
+      windowInfo->swapchain->recreateSwapchain(w, h);
       continue;
     }
 
-    auto frame = backend.beginFrame(windowInfo);
-    bool anyValid = false;
-    if (!frame.valid) {
-      Api::resizeWindow(frame.windowInfo, static_cast<uint32_t>(w),
-                        static_cast<uint32_t>(h));
-    } else {
-      anyValid = true;
+    auto acq = windowInfo->swapchain->acquireNextImage();
+    if (!acq) {
+      if (acq.error().code == devices::Swapchain::PresentError::Code::outOfDate)
+        continue;
+      throw std::runtime_error(acq.error().message);
     }
+    uint32_t imageIndex = *acq;
 
-    if (!anyValid) {
-      Api::endFrame(frame); // ← always call endFrame to clear the
-                            // acquired context
-      continue;
-    }
+    auto &pool = dev->getGraphicsPool();
+    pool.allocatePrimary(1);
+    vk::CommandBuffer cmd = *pool.primary.back();
+    cmd.begin(vk::CommandBufferBeginInfo{
+        vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
 
-    Api::endFrame(frame);
+    // Get the swapchain image
+    auto swapchainImgData = windowInfo->swapchain->getSwapchainImageData(imageIndex);
+    checkMsg(swapchainImgData.has_value(), "testGraphicsLoop: missing swapchain image data");
+    vk::Image swapchainImage = swapchainImgData->image;
+
+    // Transition to PRESENT_SRC_KHR
+    vk::ImageMemoryBarrier preBarrier{
+        vk::AccessFlagBits::eNone,
+        vk::AccessFlagBits::eMemoryRead,
+        vk::ImageLayout::eUndefined,
+        vk::ImageLayout::ePresentSrcKHR,
+        VK_QUEUE_FAMILY_IGNORED,
+        VK_QUEUE_FAMILY_IGNORED,
+        swapchainImage,
+        vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+    cmd.pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe,
+                        vk::PipelineStageFlagBits::eBottomOfPipe,
+                        vk::DependencyFlags{}, {}, {}, preBarrier);
+
+    submitAndPresent(windowInfo, dev, cmd, imageIndex);
     ++frameCount;
   }
-
-  backend.waitIdle(); // ← drain GPU before cleanup asserts on allocations
-
-  checkMsg(frameCount > 0, "testGraphicsLoop: no frames were rendered");
+  dev->waitIdle();
+  checkMsg(frameCount > 0, "testGraphicsLoop: no frames rendered");
   std::cout << "[PASS] testGraphicsLoop (" << frameCount << " frames)\n";
-}
+}                                   
 
 // =========================================================================
 // testRenderLoop
 // =========================================================================
 static void
-testRenderLoop(Api &backend,
+testRenderLoop(std::shared_ptr<devices::Device> dev,
+               std::shared_ptr<pipelines::Manager> pipelineManager,
                const std::shared_ptr<devices::WindowInfo> &windowInfo,
                GLFWwindow *glfwWin) {
-  // ── Prepare the pipeline ─────────────────────────────────────────────
-  auto dev = backend.getFirstDevice();
-  checkMsg(dev != nullptr, "getFirstDevice() returned nullptr");
-
-  // Get swapchain colour format (all images share the same format)
   auto imgData = windowInfo->swapchain->getSwapchainImageData(0);
-  checkMsg(imgData.has_value(),
-           "testRenderLoop: could not retrieve swapchain image data");
+  checkMsg(imgData.has_value(), "testRenderLoop: no swapchain image data");
   vk::Format colorFormat = imgData->format;
 
-  // Create a simple empty pipeline layout
   vk::PipelineLayoutCreateInfo layoutCI{};
   vk::raii::PipelineLayout pipelineLayout{*dev->getDevicePtr(), layoutCI};
 
-  // Build  pipeline info (exactly like test_main)
   pipelines::DynamicPipelineInfo dynInfo;
   dynInfo.tag.shaderTag = &g_shader;
   dynInfo.tag.layout = *pipelineLayout;
@@ -155,72 +195,121 @@ testRenderLoop(Api &backend,
   dynInfo.attachments.color = {colorFormat};
   dynInfo.multisample.samples = vk::SampleCountFlagBits::e1;
 
-  // Get or create the pipeline
-  auto pipelineResult = backend.createPipeline(dynInfo);
-  checkMsg(pipelineResult.has_value(),
-           "testRenderLoop: failed to create dynamic pipeline");
-  auto pipeline = *pipelineResult; // shared_ptr<vk::raii::Pipeline>
+  auto pipeResult = pipelineManager->getOrCreate(dynInfo, dev->getDevicePtr());
+  checkMsg(pipeResult.has_value(), "testRenderLoop: pipeline creation failed");
+  auto pipeline = *pipeResult;
 
-  // ── Render loop ──────────────────────────────────────────────────────
+  // Create image views for swapchain images
+  auto swapchainViews = createSwapchainImageViews(windowInfo, dev);
+
   int frameCount = 0;
   int w = 0, h = 0;
-
   for (int i = 0; i < 120; ++i) {
     glfwPollEvents();
     glfwGetFramebufferSize(glfwWin, &w, &h);
 
-    if (windowInfo->swapchain && windowInfo->swapchain->needRecreation()) {
-      Api::resizeWindow(windowInfo, static_cast<uint32_t>(w),
-                        static_cast<uint32_t>(h));
+    if (windowInfo->swapchain->needRecreation()) {
+      windowInfo->swapchain->recreateSwapchain(w, h);
+      // Recreate views because swapchain images changed
+      swapchainViews = createSwapchainImageViews(windowInfo, dev);
       continue;
     }
 
-    auto frame = backend.beginFrame(windowInfo);
-    bool anyValid = false;
-    if (!frame.valid) {
-      Api::resizeWindow(frame.windowInfo, static_cast<uint32_t>(w),
-                        static_cast<uint32_t>(h));
-    } else {
-      anyValid = true;
-
-      // Record draw commands into the already‑opened command buffer
-      vk::CommandBuffer cmd = frame.cmd;
-      cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline);
-
-      vk::Viewport viewport{0.0f,
-                            0.0f,
-                            static_cast<float>(frame.extent.width),
-                            static_cast<float>(frame.extent.height),
-                            0.0f,
-                            1.0f};
-      cmd.setViewport(0, viewport);
-      cmd.setScissor(0, vk::Rect2D{{0, 0}, frame.extent});
-      cmd.draw(3, 1, 0, 0); // 3 vertices → triangle
+    auto acq = windowInfo->swapchain->acquireNextImage();
+    if (!acq) {
+      if (acq.error().code == devices::Swapchain::PresentError::Code::outOfDate)
+        continue;
+      throw std::runtime_error(acq.error().message);
     }
+    uint32_t imageIndex = *acq;
 
-    if (!anyValid) {
-      Api::endFrame(frame);
-      continue;
-    }
+    auto &pool = dev->getGraphicsPool();
+    pool.allocatePrimary(1);
+    vk::CommandBuffer cmd = *pool.primary.back();
+    cmd.begin(vk::CommandBufferBeginInfo{
+        vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
 
-    Api::endFrame(frame);
+    // Get swapchain image for this index
+    auto swapchainImgData =
+        windowInfo->swapchain->getSwapchainImageData(imageIndex);
+    checkMsg(swapchainImgData.has_value(),
+             "testRenderLoop: missing swapchain image data");
+    vk::Image swapchainImage = swapchainImgData->image;
+
+    // Transition swapchain image to color attachment optimal
+    vk::ImageMemoryBarrier preBarrier{
+        vk::AccessFlagBits::eNone,
+        vk::AccessFlagBits::eColorAttachmentWrite,
+        vk::ImageLayout::eUndefined,
+        vk::ImageLayout::eColorAttachmentOptimal,
+        VK_QUEUE_FAMILY_IGNORED,
+        VK_QUEUE_FAMILY_IGNORED,
+        swapchainImage,
+        vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+    cmd.pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe,
+                        vk::PipelineStageFlagBits::eColorAttachmentOutput,
+                        vk::DependencyFlags{}, {}, {}, preBarrier);
+
+    // Begin dynamic rendering
+    vk::RenderingAttachmentInfo colorAttachment{
+        **swapchainViews[imageIndex],
+        vk::ImageLayout::eColorAttachmentOptimal,
+        vk::ResolveModeFlagBits::eNone,
+        nullptr,
+        vk::ImageLayout::eUndefined,
+        vk::AttachmentLoadOp::eClear,
+        vk::AttachmentStoreOp::eStore,
+        vk::ClearValue{std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f}}};
+    vk::RenderingInfo renderingInfo{
+        {},
+        vk::Rect2D{{0, 0},
+                   {static_cast<uint32_t>(w), static_cast<uint32_t>(h)}},
+        1,
+        0,
+        1,
+        &colorAttachment,
+        nullptr,
+        nullptr};
+    cmd.beginRendering(renderingInfo);
+
+    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline);
+    vk::Viewport viewport{0, 0, (float)w, (float)h, 0, 1};
+    cmd.setViewport(0, viewport);
+    cmd.setScissor(
+        0, vk::Rect2D{{0, 0},
+                      {static_cast<uint32_t>(w), static_cast<uint32_t>(h)}});
+    cmd.draw(3, 1, 0, 0);
+
+    cmd.endRendering();
+
+    // Transition back to present layout
+    vk::ImageMemoryBarrier postBarrier{
+        vk::AccessFlagBits::eColorAttachmentWrite,
+        vk::AccessFlagBits::eMemoryRead,
+        vk::ImageLayout::eColorAttachmentOptimal,
+        vk::ImageLayout::ePresentSrcKHR,
+        VK_QUEUE_FAMILY_IGNORED,
+        VK_QUEUE_FAMILY_IGNORED,
+        swapchainImage,
+        vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+    cmd.pipelineBarrier(vk::PipelineStageFlagBits::eColorAttachmentOutput,
+                        vk::PipelineStageFlagBits::eBottomOfPipe,
+                        vk::DependencyFlags{}, {}, {}, postBarrier);
+
+    submitAndPresent(windowInfo, dev, cmd, imageIndex);
     ++frameCount;
   }
-
-  backend.waitIdle(); // drain GPU before cleanup
-
-  checkMsg(frameCount > 0, "testRenderLoop: no frames were rendered");
+  dev->waitIdle();
+  checkMsg(frameCount > 0, "testRenderLoop: no frames rendered");
   std::cout << "[PASS] testRenderLoop (" << frameCount << " frames)\n";
 }
 
-static void testComputeDispatch(Api &backend) {
-  auto dev = backend.getFirstDevice();
-  checkMsg(dev != nullptr, "getFirstDevice() returned nullptr");
-
+static void
+testComputeDispatch(std::shared_ptr<devices::Device> dev,
+                    std::shared_ptr<pipelines::Manager> pipelineManager) {
   constexpr uint32_t bufferElements = 256;
   constexpr vk::DeviceSize bufferSize = bufferElements * sizeof(uint32_t);
 
-  // 1. Create storage buffer
   auto storageBuf = dev->createBuffer(devices::BufferCreateInfo{
       .size = bufferSize,
       .usage = vk::BufferUsageFlagBits::eStorageBuffer |
@@ -228,82 +317,65 @@ static void testComputeDispatch(Api &backend) {
       .access = devices::BufferCreateInfo::Access::gpuOnly,
       .debugName = "compute_storage"});
 
-  // 2. Create descriptor set layout + pool (for compute stage)
   auto [setLayout, set, pool] = createStorageBufferDescriptorSet(
       *dev->getDevicePtr(), storageBuf.getBuffer(),
       vk::ShaderStageFlagBits::eCompute, bufferSize);
 
-  // 3. Create pipeline layout with descriptor set + push constant range
   vk::PushConstantRange pushRange{vk::ShaderStageFlagBits::eCompute, 0,
                                   sizeof(uint32_t)};
-  vk::PipelineLayoutCreateInfo finalLayoutCI{};
-  finalLayoutCI.setSetLayouts(*setLayout);
-  finalLayoutCI.setPushConstantRanges(pushRange);
-  vk::raii::PipelineLayout finalLayout{*dev->getDevicePtr(), finalLayoutCI};
+  vk::PipelineLayoutCreateInfo layoutCI{};
+  layoutCI.setSetLayouts(*setLayout);
+  layoutCI.setPushConstantRanges(pushRange);
+  vk::raii::PipelineLayout pipelineLayout{*dev->getDevicePtr(), layoutCI};
 
-  // 4. Create compute pipeline with the correct layout
   pipelines::ComputePipelineInfo compInfo{
-      .tag = {.shaderTag = &g_computeShader, .layout = *finalLayout}};
-  auto compResult = backend.createPipeline(compInfo);
+      .tag = {.shaderTag = &g_computeShader, .layout = *pipelineLayout}};
+  auto compResult = pipelineManager->getOrCreate(compInfo, dev->getDevicePtr());
   checkMsg(compResult.has_value(), "compute pipeline creation failed");
   auto pipeline = *compResult;
 
-  // 5. Create staging readback buffer
   auto staging = dev->createBuffer(devices::BufferCreateInfo{
       .size = bufferSize,
       .usage = vk::BufferUsageFlagBits::eTransferDst,
       .access = devices::BufferCreateInfo::Access::stagingReadback,
       .debugName = "compute_staging"});
 
-  // 6. Record compute commands
   {
     auto &cmdPool = dev->getGraphicsPool();
     cmdPool.allocatePrimary(1);
-    vk::CommandBuffer cmd = *cmdPool.primary[0];
-
-    vk::CommandBufferBeginInfo beginInfo{
-        vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
-    cmd.begin(beginInfo); // ← was missing
-
+    vk::CommandBuffer cmd = *cmdPool.primary.back();
+    cmd.begin(vk::CommandBufferBeginInfo{
+        vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
     cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *pipeline);
-    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *finalLayout, 0,
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *pipelineLayout, 0,
                            *set, {});
-
-    // If the shader uses a push constant to control the fill value:
     uint32_t fillValue = 0xABABABAB;
     cmd.pushConstants<uint32_t>(
-        *finalLayout, vk::ShaderStageFlagBits::eCompute, 0,
-        fillValue); // adjust offset/size to match shader
-
-    cmd.dispatch(static_cast<uint32_t>((bufferElements + 63) / 64), 1, 1);
+        *pipelineLayout, vk::ShaderStageFlagBits::eCompute, 0, fillValue);
+    cmd.dispatch((bufferElements + 63) / 64, 1, 1);
     cmd.end();
-
     vk::SubmitInfo submit{};
     submit.setCommandBuffers(cmd);
     dev->getGraphicsQueue().submit(submit);
     dev->getGraphicsQueue().waitIdle();
   }
 
-  // 7. Copy to staging and verify
   auto task = devices::transfer(dev, storageBuf, 0, staging, 0, bufferSize);
   task.get();
   staging.invalidate();
   auto *data = static_cast<const uint32_t *>(staging.map());
   for (uint32_t i = 0; i < bufferElements; ++i) {
-    checkMsg(data[i] == 0xABABABAB,
-             "testComputeDispatch: buffer element mismatch");
+    checkMsg(data[i] == 0xABABABAB, "testComputeDispatch: mismatch");
   }
   staging.unmap();
-
   std::cout << "[PASS] testComputeDispatch\n";
 }
 
 static void testComputeWithGraphicsSingleShader(
-    Api &backend, const std::shared_ptr<devices::WindowInfo> &windowInfo,
+    std::shared_ptr<devices::Device> dev,
+    std::shared_ptr<pipelines::Manager> pipelineManager,
+    const std::shared_ptr<devices::WindowInfo> &windowInfo,
     GLFWwindow *glfwWin) {
-
-  auto dev = backend.getFirstDevice();
-  checkMsg(dev != nullptr, "getFirstDevice() returned nullptr");
 
   // ── Shader that contains all three stages ──────────────────────────
   static shaders::Shader singleShader{
@@ -336,7 +408,7 @@ static void testComputeWithGraphicsSingleShader(
   // ── Compute pipeline ───────────────────────────────────────────────
   pipelines::ComputePipelineInfo compInfo{
       .tag = {.shaderTag = &singleShader, .layout = *pipelineLayout}};
-  auto compResult = backend.createPipeline(compInfo);
+  auto compResult = pipelineManager->getOrCreate(compInfo, dev->getDevicePtr());
   checkMsg(compResult.has_value(), "single shader: compute pipeline failed");
   auto compPipe = *compResult;
 
@@ -350,7 +422,7 @@ static void testComputeWithGraphicsSingleShader(
   {
     auto &cmdPool = dev->getGraphicsPool();
     cmdPool.allocatePrimary(1);
-    vk::CommandBuffer cmd = *cmdPool.primary[0];
+    vk::CommandBuffer cmd = *cmdPool.primary.back();
     vk::CommandBufferBeginInfo beginInfo{
         vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
     cmd.begin(beginInfo);
@@ -407,60 +479,107 @@ static void testComputeWithGraphicsSingleShader(
   dynInfo.rasterization.cullMode = vk::CullModeFlagBits::eNone;
   dynInfo.depthStencil.depthTest = vk::False;
   dynInfo.attachments.color = {colorFormat};
-  // vertexBindings / vertexAttributes left empty – shader reads from SSBO
 
-  auto gfxResult = backend.createPipeline(dynInfo);
+  auto gfxResult = pipelineManager->getOrCreate(dynInfo, dev->getDevicePtr());
   checkMsg(gfxResult.has_value(), "single shader: graphics pipeline failed");
   auto gfxPipe = *gfxResult;
 
+  // Create swapchain image views
+  auto swapchainViews = createSwapchainImageViews(windowInfo, dev);
+  
   // ── Render 120 frames ──────────────────────────────────────────────
   int frameCount = 0;
   int w = 0, h = 0;
 
-  for (int i = 0; i < 120; ++i) {
+for (int i = 0; i < 120; ++i) {
     glfwPollEvents();
     glfwGetFramebufferSize(glfwWin, &w, &h);
 
-    if (windowInfo->swapchain && windowInfo->swapchain->needRecreation()) {
-      Api::resizeWindow(windowInfo, static_cast<uint32_t>(w),
-                        static_cast<uint32_t>(h));
+    if (windowInfo->swapchain->needRecreation()) {
+      windowInfo->swapchain->recreateSwapchain(w, h);
+      swapchainViews = createSwapchainImageViews(windowInfo, dev);
       continue;
     }
 
-    auto frame = backend.beginFrame(windowInfo);
-    bool anyValid = false;
-    if (!frame.valid) {
-      Api::resizeWindow(frame.windowInfo, static_cast<uint32_t>(w),
-                        static_cast<uint32_t>(h));
-    } else {
-      anyValid = true;
-      vk::CommandBuffer cmd = frame.cmd;
-
-      cmd.bindVertexBuffers(0, vertexStorage.getBuffer(), {0});
-      cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *gfxPipe);
-      cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipelineLayout,
-                             0, *descSet, {});
-
-      vk::Viewport vp{0,
-                      0,
-                      static_cast<float>(frame.extent.width),
-                      static_cast<float>(frame.extent.height),
-                      0,
-                      1};
-      cmd.setViewport(0, vp);
-      cmd.setScissor(0, vk::Rect2D{{0, 0}, frame.extent});
-      cmd.draw(3, 1, 0, 0);
+    auto acq = windowInfo->swapchain->acquireNextImage();
+    if (!acq) {
+      if (acq.error().code == devices::Swapchain::PresentError::Code::outOfDate)
+        continue;
+      throw std::runtime_error(acq.error().message);
     }
+    uint32_t imageIndex = *acq;
 
-    if (!anyValid) {
-      Api::endFrame(frame);
-      continue;
-    }
-    Api::endFrame(frame);
+    auto &pool = dev->getGraphicsPool();
+    pool.allocatePrimary(1);
+    vk::CommandBuffer cmd = *pool.primary.back();
+    cmd.begin(vk::CommandBufferBeginInfo{
+        vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+
+    // Get swapchain image
+    auto swapchainImgData = windowInfo->swapchain->getSwapchainImageData(imageIndex);
+    checkMsg(swapchainImgData.has_value(), "missing swapchain image data");
+    vk::Image swapchainImage = swapchainImgData->image;
+
+    // Transition to color attachment optimal
+    vk::ImageMemoryBarrier preBarrier{
+        vk::AccessFlagBits::eNone,
+        vk::AccessFlagBits::eColorAttachmentWrite,
+        vk::ImageLayout::eUndefined,
+        vk::ImageLayout::eColorAttachmentOptimal,
+        VK_QUEUE_FAMILY_IGNORED,
+        VK_QUEUE_FAMILY_IGNORED,
+        swapchainImage,
+        vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+    cmd.pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe,
+                        vk::PipelineStageFlagBits::eColorAttachmentOutput,
+                        vk::DependencyFlags{}, {}, {}, preBarrier);
+
+    // Begin dynamic rendering
+    vk::RenderingAttachmentInfo colorAttachment{
+        **swapchainViews[imageIndex],
+        vk::ImageLayout::eColorAttachmentOptimal,
+        vk::ResolveModeFlagBits::eNone,
+        nullptr,
+        vk::ImageLayout::eUndefined,
+        vk::AttachmentLoadOp::eClear,
+        vk::AttachmentStoreOp::eStore,
+        vk::ClearValue{std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f}}};
+    vk::RenderingInfo renderingInfo{
+        {}, vk::Rect2D{{0, 0}, {static_cast<uint32_t>(w), static_cast<uint32_t>(h)}},
+        1, 0, 1, &colorAttachment, nullptr, nullptr};
+    cmd.beginRendering(renderingInfo);
+
+    // Draw commands
+    cmd.bindVertexBuffers(0, vertexStorage.getBuffer(), {0});
+    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *gfxPipe);
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipelineLayout,
+                           0, *descSet, {});
+    vk::Viewport vp{0, 0, (float)w, (float)h, 0, 1};
+    cmd.setViewport(0, vp);
+    cmd.setScissor(0, vk::Rect2D{{0, 0}, {static_cast<uint32_t>(w), static_cast<uint32_t>(h)}});
+    cmd.draw(3, 1, 0, 0);
+
+    cmd.endRendering();
+
+    // Transition to present
+    vk::ImageMemoryBarrier postBarrier{
+        vk::AccessFlagBits::eColorAttachmentWrite,
+        vk::AccessFlagBits::eMemoryRead,
+        vk::ImageLayout::eColorAttachmentOptimal,
+        vk::ImageLayout::ePresentSrcKHR,
+        VK_QUEUE_FAMILY_IGNORED,
+        VK_QUEUE_FAMILY_IGNORED,
+        swapchainImage,
+        vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+    cmd.pipelineBarrier(vk::PipelineStageFlagBits::eColorAttachmentOutput,
+                        vk::PipelineStageFlagBits::eBottomOfPipe,
+                        vk::DependencyFlags{}, {}, {}, postBarrier);
+
+    submitAndPresent(windowInfo, dev, cmd, imageIndex);
     ++frameCount;
   }
 
-  backend.waitIdle();
+  dev->waitIdle();
   checkMsg(frameCount > 0,
            "testComputeWithGraphicsSingleShader: no frames rendered");
   std::cout << "[PASS] testComputeWithGraphicsSingleShader (" << frameCount
@@ -468,10 +587,10 @@ static void testComputeWithGraphicsSingleShader(
 }
 
 static void testComputeWithGraphicsMultipleShaders(
-    Api &backend, const std::shared_ptr<devices::WindowInfo> &windowInfo,
+    std::shared_ptr<devices::Device> dev,
+    std::shared_ptr<pipelines::Manager> pipelineManager,
+    const std::shared_ptr<devices::WindowInfo> &windowInfo,
     GLFWwindow *glfwWin) {
-  auto dev = backend.getFirstDevice();
-  checkMsg(dev != nullptr, "getFirstDevice() returned nullptr");
 
   static shaders::Shader compShader{
       .entryPoints = {{"main", vk::ShaderStageFlagBits::eCompute}},
@@ -503,7 +622,7 @@ static void testComputeWithGraphicsMultipleShaders(
 
   pipelines::ComputePipelineInfo compInfo{
       .tag = {.shaderTag = &compShader, .layout = *compPipelineLayout}};
-  auto compResult = backend.createPipeline(compInfo);
+  auto compResult = pipelineManager->getOrCreate(compInfo, dev->getDevicePtr());
   checkMsg(compResult.has_value(), "multiple shaders: compute pipeline failed");
   auto compPipe = *compResult;
 
@@ -516,7 +635,7 @@ static void testComputeWithGraphicsMultipleShaders(
   {
     auto &cmdPool = dev->getComputePool();
     cmdPool.allocatePrimary(1);
-    vk::CommandBuffer cmd = *cmdPool.primary[0];
+    vk::CommandBuffer cmd = *cmdPool.primary.back();
     vk::CommandBufferBeginInfo beginInfo{
         vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
     cmd.begin(beginInfo);
@@ -526,7 +645,6 @@ static void testComputeWithGraphicsMultipleShaders(
                            0, *compSet, {});
     cmd.dispatch(1, 1, 1);
 
-    // Barrier: make the compute writes available to all subsequent commands
     vk::BufferMemoryBarrier2 barrier2;
     barrier2.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader;
     barrier2.srcAccessMask = vk::AccessFlagBits2::eShaderWrite;
@@ -584,7 +702,7 @@ static void testComputeWithGraphicsMultipleShaders(
   dynInfo.depthStencil.depthTest = vk::False;
   dynInfo.attachments.color = {colorFormat};
 
-  auto gfxResult = backend.createPipeline(dynInfo);
+  auto gfxResult = pipelineManager->getOrCreate(dynInfo, dev->getDevicePtr());
   checkMsg(gfxResult.has_value(), "multiple shaders: graphics pipeline failed");
   auto gfxPipe = *gfxResult;
 
@@ -592,48 +710,101 @@ static void testComputeWithGraphicsMultipleShaders(
       *dev->getDevicePtr(), vertexStorage.getBuffer(),
       vk::ShaderStageFlagBits::eVertex, vbSize);
 
+  // Create swapchain image views
+  auto swapchainViews = createSwapchainImageViews(windowInfo, dev);
+  
   // Render 120 frames
   int frameCount = 0;
   int w = 0, h = 0;
-  for (int i = 0; i < 120; ++i) {
+    for (int i = 0; i < 120; ++i) {
     glfwPollEvents();
     glfwGetFramebufferSize(glfwWin, &w, &h);
 
-    if (windowInfo->swapchain && windowInfo->swapchain->needRecreation()) {
-      Api::resizeWindow(windowInfo, static_cast<uint32_t>(w),
-                        static_cast<uint32_t>(h));
+    if (windowInfo->swapchain->needRecreation()) {
+      windowInfo->swapchain->recreateSwapchain(w, h);
+      swapchainViews = createSwapchainImageViews(windowInfo, dev);
       continue;
     }
 
-    auto frame = backend.beginFrame(windowInfo);
-    bool anyValid = false;
-
-    if (!frame.valid) {
-      Api::resizeWindow(frame.windowInfo, static_cast<uint32_t>(w),
-                        static_cast<uint32_t>(h));
-    } else {
-      anyValid = true;
-      vk::CommandBuffer cmd = frame.cmd;
-      cmd.bindVertexBuffers(0, vertexStorage.getBuffer(), {0});
-      cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *gfxPipe);
-      cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
-                             *gfxPipelineLayout, 0, *gfxSet, {});
-      vk::Viewport vp{
-          0, 0, (float)frame.extent.width, (float)frame.extent.height, 0, 1};
-      cmd.setViewport(0, vp);
-      cmd.setScissor(0, vk::Rect2D{{0, 0}, frame.extent});
-      cmd.draw(3, 1, 0, 0);
+    auto acq = windowInfo->swapchain->acquireNextImage();
+    if (!acq) {
+      if (acq.error().code == devices::Swapchain::PresentError::Code::outOfDate)
+        continue;
+      throw std::runtime_error(acq.error().message);
     }
+    uint32_t imageIndex = *acq;
 
-    if (!anyValid) {
-      Api::endFrame(frame);
-      continue;
-    }
-    Api::endFrame(frame);
+    auto &pool = dev->getGraphicsPool();
+    pool.allocatePrimary(1);
+    vk::CommandBuffer cmd = *pool.primary.back();
+    cmd.begin(vk::CommandBufferBeginInfo{
+        vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+
+    // Get swapchain image
+    auto swapchainImgData = windowInfo->swapchain->getSwapchainImageData(imageIndex);
+    checkMsg(swapchainImgData.has_value(), "missing swapchain image data");
+    vk::Image swapchainImage = swapchainImgData->image;
+
+    // Transition to color attachment optimal
+    vk::ImageMemoryBarrier preBarrier{
+        vk::AccessFlagBits::eNone,
+        vk::AccessFlagBits::eColorAttachmentWrite,
+        vk::ImageLayout::eUndefined,
+        vk::ImageLayout::eColorAttachmentOptimal,
+        VK_QUEUE_FAMILY_IGNORED,
+        VK_QUEUE_FAMILY_IGNORED,
+        swapchainImage,
+        vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+    cmd.pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe,
+                        vk::PipelineStageFlagBits::eColorAttachmentOutput,
+                        vk::DependencyFlags{}, {}, {}, preBarrier);
+
+    // Begin dynamic rendering
+    vk::RenderingAttachmentInfo colorAttachment{
+        **swapchainViews[imageIndex],
+        vk::ImageLayout::eColorAttachmentOptimal,
+        vk::ResolveModeFlagBits::eNone,
+        nullptr,
+        vk::ImageLayout::eUndefined,
+        vk::AttachmentLoadOp::eClear,
+        vk::AttachmentStoreOp::eStore,
+        vk::ClearValue{std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f}}};
+    vk::RenderingInfo renderingInfo{
+        {}, vk::Rect2D{{0, 0}, {static_cast<uint32_t>(w), static_cast<uint32_t>(h)}},
+        1, 0, 1, &colorAttachment, nullptr, nullptr};
+    cmd.beginRendering(renderingInfo);
+
+    // Draw commands
+    cmd.bindVertexBuffers(0, vertexStorage.getBuffer(), {0});
+    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *gfxPipe);
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *gfxPipelineLayout,
+                           0, *gfxSet, {});
+    vk::Viewport vp{0, 0, (float)w, (float)h, 0, 1};
+    cmd.setViewport(0, vp);
+    cmd.setScissor(0, vk::Rect2D{{0, 0}, {static_cast<uint32_t>(w), static_cast<uint32_t>(h)}});
+    cmd.draw(3, 1, 0, 0);
+
+    cmd.endRendering();
+
+    // Transition to present
+    vk::ImageMemoryBarrier postBarrier{
+        vk::AccessFlagBits::eColorAttachmentWrite,
+        vk::AccessFlagBits::eMemoryRead,
+        vk::ImageLayout::eColorAttachmentOptimal,
+        vk::ImageLayout::ePresentSrcKHR,
+        VK_QUEUE_FAMILY_IGNORED,
+        VK_QUEUE_FAMILY_IGNORED,
+        swapchainImage,
+        vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+    cmd.pipelineBarrier(vk::PipelineStageFlagBits::eColorAttachmentOutput,
+                        vk::PipelineStageFlagBits::eBottomOfPipe,
+                        vk::DependencyFlags{}, {}, {}, postBarrier);
+
+    submitAndPresent(windowInfo, dev, cmd, imageIndex);
     ++frameCount;
   }
 
-  backend.waitIdle();
+  dev->waitIdle();
   checkMsg(frameCount > 0,
            "testComputeWithGraphicsMultipleShaders: no frames rendered");
   std::cout << "[PASS] testComputeWithGraphicsMultipleShaders (" << frameCount
@@ -643,12 +814,10 @@ static void testComputeWithGraphicsMultipleShaders(
 // =========================================================================
 int main() {
   try {
-    // ── 1. GLFW setup
-    // ─────────────────────────────────────────────────────
+    // GLFW setup
     glfwSetErrorCallback(glfwError);
     if (!glfwInit())
       throw std::runtime_error("GLFW init failed");
-
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     GLFWwindow *window =
         glfwCreateWindow(800, 600, "Backend Test", nullptr, nullptr);
@@ -659,60 +828,65 @@ int main() {
     glfwShowWindow(window);
     glfwPollEvents();
 
-    // ── 2. Pool + Backend setup
-    // ───────────────────────────────────────────
+    // Pool & managers
     auto poolManager = std::make_shared<concurrency::pool::Manager>();
+    auto instance = std::make_shared<instances::Instance>();
 
-    graphics::GraphicsApi backend{poolManager};
-
+    // Add required GLFW extensions
     uint32_t extCount = 0;
     const char **glfwExts = glfwGetRequiredInstanceExtensions(&extCount);
     if (!glfwExts)
-      throw std::runtime_error(
-          "glfwGetRequiredInstanceExtensions returned null");
-    backend.addRequiredExtensions({glfwExts, extCount});
+      throw std::runtime_error("glfwGetRequiredInstanceExtensions failed");
+    for (uint32_t i = 0; i < extCount; ++i)
+      instances::Config::instance().addInstanceExtension(glfwExts[i]);
 
-    // ── 3. Surface + Window registration ─────────────────────────────────
-    auto instancePtr = backend.getInstance().getInstancePtr();
-    VkSurfaceKHR rawSurface = VK_NULL_HANDLE;
-    if (glfwCreateWindowSurface(**instancePtr, window, nullptr, &rawSurface) !=
-        VK_SUCCESS)
+    auto deviceManager = std::make_shared<devices::Manager>(
+        instance->getInstancePtr(), poolManager);
+    auto shaderManager = std::make_shared<shaders::Manager>();
+    auto pipelineManager = std::make_shared<pipelines::Manager>(shaderManager);
+
+    auto entries = deviceManager->getDeviceEntries();
+    if (entries.empty())
+      throw std::runtime_error("No Vulkan device found");
+    auto device = entries.front().device;
+
+    // Create window surface
+    VkSurfaceKHR rawSurface;
+    if (glfwCreateWindowSurface(**instance->getInstancePtr(), window, nullptr,
+                                &rawSurface) != VK_SUCCESS)
       throw std::runtime_error("Surface creation failed");
 
     auto windowInfo = std::make_shared<devices::WindowInfo>();
-    windowInfo->surface =
-        std::make_unique<vk::raii::SurfaceKHR>(*instancePtr, rawSurface);
-    windowInfo->instance = instancePtr;
+    windowInfo->surface = std::make_unique<vk::raii::SurfaceKHR>(
+        *instance->getInstancePtr(), rawSurface);
+    windowInfo->instance = instance->getInstancePtr();
 
-    int width = 0, height = 0;
+    int width, height;
     glfwGetFramebufferSize(window, &width, &height);
-    vk::Extent2D extent{static_cast<uint32_t>(width),
-                        static_cast<uint32_t>(height)};
+    devices::Swapchain::SwapchainInfo swapInfo;
+    swapInfo.extent = vk::Extent2D{static_cast<uint32_t>(width),
+                                   static_cast<uint32_t>(height)};
+    device->createWindow(windowInfo, 2, swapInfo);
 
-    backend.createWindow(windowInfo, 2, extent);
+    // Run tests
+    testGraphicsLoop(device, windowInfo, window);
+    testRenderLoop(device, pipelineManager, windowInfo, window);
+    testComputeDispatch(device, pipelineManager);
 
-    // ── 4. Run all tests
-    // ──────────────────────────────────────────────────
+    testComputeWithGraphicsSingleShader(device, pipelineManager, windowInfo,
+                                        window);
+    testComputeWithGraphicsMultipleShaders(device, pipelineManager, windowInfo,
+                                           window);
 
-    testGraphicsLoop(backend, windowInfo, window);
-    testRenderLoop(backend, windowInfo, window);
-
-    testComputeDispatch(backend);
-    testComputeWithGraphicsSingleShader(backend, windowInfo, window);
-    testComputeWithGraphicsMultipleShaders(backend, windowInfo, window);
-
-    // ── 5. Cleanup
-    // ────────────────────────────────────────────────────────
-    backend.waitIdle();
-    backend.removeWindow(windowInfo);
+    // Cleanup
+    device->waitIdle();
+    device->removeWindow(windowInfo);
     windowInfo.reset();
-
     glfwDestroyWindow(window);
     glfwTerminate();
 
     std::cout << "All backend tests PASSED\n";
     return EXIT_SUCCESS;
-
   } catch (const std::exception &e) {
     std::cerr << "FATAL: " << e.what() << '\n';
     return EXIT_FAILURE;

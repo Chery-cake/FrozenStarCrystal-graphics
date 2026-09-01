@@ -35,4 +35,19 @@ struct FROZENSTARCRYSTAL_GRAPHICS_API SceneRenderContext {
   std::shared_ptr<media::BufferArrayRegistry> bindlessBuffers;
 };
 
+struct SceneId {
+  uint64_t value;
+  explicit SceneId(uint64_t v = 0) : value(v) {}
+
+  [[nodiscard]] SceneId next() const { return SceneId{value + 1}; }
+
+  constexpr auto operator<=>(const SceneId &) const noexcept = default;
+
+  struct Hash {
+    std::size_t operator()(const SceneId &id) const noexcept {
+      return std::hash<uint64_t>{}(id.value);
+    }
+  };
+};
+
 } // namespace graphics::vulkan::compositors
