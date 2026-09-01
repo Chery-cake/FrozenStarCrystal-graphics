@@ -380,4 +380,311 @@ export {
     std::unique_ptr<vk::raii::PipelineLayout> pipelineLayout_;
     std::shared_ptr<vk::raii::Pipeline> pipeline_;
   };
+
+  // -------------------------------------------------------------------------
+  // ComputeScene – dispatches a compute shader that fills a storage buffer,
+  // then copies the buffer to a staging buffer for readback.
+  // -------------------------------------------------------------------------
+  class ComputeScene {
+  public:
+    ComputeScene(std::shared_ptr<devices::Device> dev,
+                 std::shared_ptr<pipelines::Manager> pipelineManager,
+                 std::shared_ptr<vk::raii::Pipeline> computePipeline,
+                 vk::DescriptorSet descSet, // ← changed
+                 vk::PipelineLayout layout,
+                 devices::AllocatedBuffer &storageBuf,
+                 devices::AllocatedBuffer &stagingBuf, uint32_t bufferElements,
+                 uint32_t fillValue)
+        : device_(dev), pipeline_(computePipeline), descSet_(descSet),
+          layout_(layout), storageBuf_(storageBuf), stagingBuf_(stagingBuf),
+          bufferElements_(bufferElements), fillValue_(fillValue) {}
+
+    void beginRecord(const graphics::vulkan::compositors::FrameContext &) {}
+
+    concurrency::pool::coroutine::CoroutineTask<
+        concurrency::pool::coroutine::policy::Suspend::Never, void>
+    record(const graphics::vulkan::compositors::FrameContext &frame) {
+      // Bind and dispatch compute
+      frame.cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *pipeline_);
+      frame.cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, layout_, 0,
+                                   descSet_, {});
+      uint32_t groupCount = (bufferElements_ + 63) / 64;
+      frame.cmd.dispatch(groupCount, 1, 1);
+
+      // Barrier: make compute writes visible to transfer
+      vk::BufferMemoryBarrier2 barrier{
+          vk::PipelineStageFlagBits2::eComputeShader,
+          vk::AccessFlagBits2::eShaderWrite,
+          vk::PipelineStageFlagBits2::eTransfer,
+          vk::AccessFlagBits2::eTransferRead,
+          vk::QueueFamilyIgnored,
+          vk::QueueFamilyIgnored,
+          storageBuf_.getBuffer(),
+          0,
+          bufferElements_ * sizeof(uint32_t)};
+      vk::DependencyInfo depInfo{};
+      depInfo.setBufferMemoryBarriers(barrier);
+      frame.cmd.pipelineBarrier2(depInfo);
+
+      // Copy storage -> staging
+      vk::BufferCopy region{0, 0, bufferElements_ * sizeof(uint32_t)};
+      frame.cmd.copyBuffer(storageBuf_.getBuffer(), stagingBuf_.getBuffer(),
+                           region);
+
+      co_return;
+    }
+
+    void endRecord(const graphics::vulkan::compositors::FrameContext &) {}
+
+    graphics::vulkan::compositors::SceneRenderContext sceneContext() const {
+      return {};
+    }
+    void
+    setSceneContext(const graphics::vulkan::compositors::SceneRenderContext &) {
+    }
+
+  private:
+    std::shared_ptr<devices::Device> device_;
+    std::shared_ptr<vk::raii::Pipeline> pipeline_;
+    vk::DescriptorSet descSet_;
+    vk::PipelineLayout layout_;
+    devices::AllocatedBuffer &storageBuf_;
+    devices::AllocatedBuffer &stagingBuf_;
+    uint32_t bufferElements_;
+    uint32_t fillValue_;
+  };
+
+  // -------------------------------------------------------------------------
+  // GraphicsScene – draws a triangle using a vertex buffer (filled by
+  // compute)
+  // -------------------------------------------------------------------------
+  class GraphicsScene {
+  public:
+    GraphicsScene(std::shared_ptr<devices::Device> dev,
+                  std::shared_ptr<vk::raii::Pipeline> graphicsPipeline,
+                  vk::PipelineLayout layout,
+                  devices::AllocatedBuffer &vertexBuffer, uint32_t vertexCount)
+        : device_(dev), pipeline_(graphicsPipeline), layout_(layout),
+          vertexBuffer_(vertexBuffer), vertexCount_(vertexCount) {}
+
+    void beginRecord(const graphics::vulkan::compositors::FrameContext &) {}
+
+    concurrency::pool::coroutine::CoroutineTask<
+        concurrency::pool::coroutine::policy::Suspend::Never, void>
+    record(const graphics::vulkan::compositors::FrameContext &frame) {
+      // Begin rendering with loadOp=eLoad (preserve default clear)
+      vk::RenderingAttachmentInfo colorAtt{
+          frame.view,
+          vk::ImageLayout::eColorAttachmentOptimal,
+          vk::ResolveModeFlagBits::eNone,
+          nullptr,
+          vk::ImageLayout::eUndefined,
+          vk::AttachmentLoadOp::eLoad,
+          vk::AttachmentStoreOp::eStore,
+          {}};
+      vk::RenderingInfo renderInfo{
+          {},     vk::Rect2D{{0, 0}, frame.extent}, 1, 0, 1, &colorAtt, nullptr,
+          nullptr};
+      frame.cmd.beginRendering(renderInfo);
+
+      // Bind vertex buffer and pipeline
+      vk::DeviceSize offset = 0;
+      frame.cmd.bindVertexBuffers(0, vertexBuffer_.getBuffer(), offset);
+      frame.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline_);
+
+      vk::Viewport viewport{
+          0, 0, (float)frame.extent.width, (float)frame.extent.height, 0, 1};
+      frame.cmd.setViewport(0, viewport);
+      frame.cmd.setScissor(0, vk::Rect2D{{0, 0}, frame.extent});
+
+      frame.cmd.draw(vertexCount_, 1, 0, 0);
+
+      frame.cmd.endRendering();
+      co_return;
+    }
+
+    void endRecord(const graphics::vulkan::compositors::FrameContext &) {}
+
+    graphics::vulkan::compositors::SceneRenderContext sceneContext() const {
+      return {};
+    }
+    void
+    setSceneContext(const graphics::vulkan::compositors::SceneRenderContext &) {
+    }
+
+  private:
+    std::shared_ptr<devices::Device> device_;
+    std::shared_ptr<vk::raii::Pipeline> pipeline_;
+    vk::PipelineLayout layout_;
+    devices::AllocatedBuffer &vertexBuffer_;
+    uint32_t vertexCount_;
+  };
+
+  // Create a compute scene that dispatches and adds a barrier
+  class ComputeToVertexScene {
+  public:
+    ComputeToVertexScene(devices::Device *dev, vk::Pipeline pipeline,
+                         vk::PipelineLayout layout, vk::DescriptorSet descSet,
+                         devices::AllocatedBuffer *vertexBuf)
+        : dev_(dev), pipeline_(pipeline), layout_(layout), descSet_(descSet),
+          vertexBuf_(vertexBuf) {}
+
+    void beginRecord(const graphics::vulkan::compositors::FrameContext &) {}
+
+    concurrency::pool::coroutine::CoroutineTask<
+        concurrency::pool::coroutine::policy::Suspend::Never, void>
+    record(const graphics::vulkan::compositors::FrameContext &frame) {
+      frame.cmd.bindPipeline(vk::PipelineBindPoint::eCompute, pipeline_);
+      frame.cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, layout_, 0,
+                                   descSet_, {});
+      frame.cmd.dispatch(1, 1, 1);
+
+      vk::BufferMemoryBarrier2 barrier{
+          vk::PipelineStageFlagBits2::eComputeShader,
+          vk::AccessFlagBits2::eShaderWrite,
+          vk::PipelineStageFlagBits2::eVertexInput,
+          vk::AccessFlagBits2::eVertexAttributeRead,
+          vk::QueueFamilyIgnored,
+          vk::QueueFamilyIgnored,
+          vertexBuf_->getBuffer(),
+          0,
+          vk::WholeSize};
+      vk::DependencyInfo depInfo{};
+      depInfo.setBufferMemoryBarriers(barrier);
+      frame.cmd.pipelineBarrier2(depInfo);
+      co_return;
+    }
+    void endRecord(const graphics::vulkan::compositors::FrameContext &) {}
+    graphics::vulkan::compositors::SceneRenderContext sceneContext() const {
+      return {};
+    }
+    void
+    setSceneContext(const graphics::vulkan::compositors::SceneRenderContext &) {
+    }
+
+  private:
+    devices::Device *dev_;
+    vk::Pipeline pipeline_;
+    vk::PipelineLayout layout_;
+    vk::DescriptorSet descSet_;
+    devices::AllocatedBuffer *vertexBuf_;
+  };
+
+  // Graphics scene
+  class VertexDrawScene {
+  public:
+    VertexDrawScene(devices::Device *dev, vk::Pipeline pipeline,
+                    vk::PipelineLayout layout, devices::AllocatedBuffer *vbuf,
+                    uint32_t count)
+        : dev_(dev), pipeline_(pipeline), layout_(layout), vbuf_(vbuf),
+          count_(count) {}
+
+    void beginRecord(const graphics::vulkan::compositors::FrameContext &) {}
+    concurrency::pool::coroutine::CoroutineTask<
+        concurrency::pool::coroutine::policy::Suspend::Never, void>
+    record(const graphics::vulkan::compositors::FrameContext &frame) {
+      vk::RenderingAttachmentInfo colorAtt{
+          frame.view,
+          vk::ImageLayout::eColorAttachmentOptimal,
+          vk::ResolveModeFlagBits::eNone,
+          nullptr,
+          vk::ImageLayout::eUndefined,
+          vk::AttachmentLoadOp::eLoad,
+          vk::AttachmentStoreOp::eStore,
+          {}};
+      vk::RenderingInfo renderInfo{
+          {},     vk::Rect2D{{0, 0}, frame.extent}, 1, 0, 1, &colorAtt, nullptr,
+          nullptr};
+      frame.cmd.beginRendering(renderInfo);
+      vk::DeviceSize offset = 0;
+      frame.cmd.bindVertexBuffers(0, vbuf_->getBuffer(), offset);
+      frame.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline_);
+      vk::Viewport vp{
+          0, 0, (float)frame.extent.width, (float)frame.extent.height, 0, 1};
+      frame.cmd.setViewport(0, vp);
+      frame.cmd.setScissor(0, vk::Rect2D{{0, 0}, frame.extent});
+      frame.cmd.draw(count_, 1, 0, 0);
+      frame.cmd.endRendering();
+      co_return;
+    }
+    void endRecord(const graphics::vulkan::compositors::FrameContext &) {}
+    graphics::vulkan::compositors::SceneRenderContext sceneContext() const {
+      return {};
+    }
+    void
+    setSceneContext(const graphics::vulkan::compositors::SceneRenderContext &) {
+    }
+
+  private:
+    devices::Device *dev_;
+    vk::Pipeline pipeline_;
+    vk::PipelineLayout layout_;
+    devices::AllocatedBuffer *vbuf_;
+    uint32_t count_;
+  };
+
+  class FillBufferComputeScene {
+  public:
+    FillBufferComputeScene(std::shared_ptr<devices::Device> dev,
+                           std::shared_ptr<vk::raii::Pipeline> pipeline,
+                           vk::DescriptorSet descSet, vk::PipelineLayout layout,
+                           devices::AllocatedBuffer &storageBuf,
+                           devices::AllocatedBuffer &stagingBuf,
+                           uint32_t bufferElements, uint32_t fillValue)
+        : device_(dev), pipeline_(pipeline), descSet_(descSet), layout_(layout),
+          storageBuf_(storageBuf), stagingBuf_(stagingBuf),
+          bufferElements_(bufferElements), fillValue_(fillValue) {}
+
+    void beginRecord(const graphics::vulkan::compositors::FrameContext &) {}
+
+    concurrency::pool::coroutine::CoroutineTask<
+        concurrency::pool::coroutine::policy::Suspend::Never, void>
+    record(const graphics::vulkan::compositors::FrameContext &frame) {
+      frame.cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *pipeline_);
+      frame.cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, layout_, 0,
+                                   descSet_, {});
+      frame.cmd.pushConstants<uint32_t>(
+          layout_, vk::ShaderStageFlagBits::eCompute, 0, fillValue_);
+      uint32_t groupCount = (bufferElements_ + 63) / 64;
+      frame.cmd.dispatch(groupCount, 1, 1);
+
+      vk::BufferMemoryBarrier2 barrier{
+          vk::PipelineStageFlagBits2::eComputeShader,
+          vk::AccessFlagBits2::eShaderWrite,
+          vk::PipelineStageFlagBits2::eTransfer,
+          vk::AccessFlagBits2::eTransferRead,
+          vk::QueueFamilyIgnored,
+          vk::QueueFamilyIgnored,
+          storageBuf_.getBuffer(),
+          0,
+          bufferElements_ * sizeof(uint32_t)};
+      vk::DependencyInfo depInfo{};
+      depInfo.setBufferMemoryBarriers(barrier);
+      frame.cmd.pipelineBarrier2(depInfo);
+
+      vk::BufferCopy region{0, 0, bufferElements_ * sizeof(uint32_t)};
+      frame.cmd.copyBuffer(storageBuf_.getBuffer(), stagingBuf_.getBuffer(),
+                           region);
+      co_return;
+    }
+
+    void endRecord(const graphics::vulkan::compositors::FrameContext &) {}
+
+    graphics::vulkan::compositors::SceneRenderContext sceneContext() const {
+      return {};
+    }
+    void
+    setSceneContext(const graphics::vulkan::compositors::SceneRenderContext &) {
+    }
+
+  private:
+    std::shared_ptr<devices::Device> device_;
+    std::shared_ptr<vk::raii::Pipeline> pipeline_;
+    vk::DescriptorSet descSet_;
+    vk::PipelineLayout layout_;
+    devices::AllocatedBuffer &storageBuf_;
+    devices::AllocatedBuffer &stagingBuf_;
+    uint32_t bufferElements_;
+    uint32_t fillValue_;
+  };
 }
