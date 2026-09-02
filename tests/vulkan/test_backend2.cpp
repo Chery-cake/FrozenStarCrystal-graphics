@@ -9,16 +9,21 @@ import vulkan_helper;
 using namespace graphics::vulkan;
 
 // --- Shader definition ---------------------------------------------------
-static shaders::Shader g_shader{
-    .entryPoints = {{"vertexMain", vk::ShaderStageFlagBits::eVertex},
-                    {"fragmentMain", vk::ShaderStageFlagBits::eFragment}},
-    .sourcePath = "main.slang"};
+shaders::Shader &getShader() {
+  static shaders::Shader shader{
+      .entryPoints = {{"vertexMain", vk::ShaderStageFlagBits::eVertex},
+                      {"fragmentMain", vk::ShaderStageFlagBits::eFragment}},
+      .sourcePath = "main.slang"};
+  return shader;
+}
 
 // After g_shader definition
-
-static shaders::Shader g_computeShader{
-    .entryPoints = {{"main", vk::ShaderStageFlagBits::eCompute}},
-    .sourcePath = "fill_buffer.slang"};
+shaders::Shader &getComputeShader() {
+  static shaders::Shader shader{
+      .entryPoints = {{"main", vk::ShaderStageFlagBits::eCompute}},
+      .sourcePath = "fill_buffer.slang"};
+  return shader;
+}
 
 // --- GLFW error callback -------------------------------------------------
 static void glfwError(int code, const char *desc) {
@@ -145,8 +150,10 @@ testGraphicsLoop(std::shared_ptr<devices::Device> dev,
         vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
 
     // Get the swapchain image
-    auto swapchainImgData = windowInfo->swapchain->getSwapchainImageData(imageIndex);
-    checkMsg(swapchainImgData.has_value(), "testGraphicsLoop: missing swapchain image data");
+    auto swapchainImgData =
+        windowInfo->swapchain->getSwapchainImageData(imageIndex);
+    checkMsg(swapchainImgData.has_value(),
+             "testGraphicsLoop: missing swapchain image data");
     vk::Image swapchainImage = swapchainImgData->image;
 
     // Transition to PRESENT_SRC_KHR
@@ -169,7 +176,7 @@ testGraphicsLoop(std::shared_ptr<devices::Device> dev,
   dev->waitIdle();
   checkMsg(frameCount > 0, "testGraphicsLoop: no frames rendered");
   std::cout << "[PASS] testGraphicsLoop (" << frameCount << " frames)\n";
-}                                   
+}
 
 // =========================================================================
 // testRenderLoop
@@ -187,7 +194,7 @@ testRenderLoop(std::shared_ptr<devices::Device> dev,
   vk::raii::PipelineLayout pipelineLayout{*dev->getDevicePtr(), layoutCI};
 
   pipelines::DynamicPipelineInfo dynInfo;
-  dynInfo.tag.shaderTag = &g_shader;
+  dynInfo.tag.shaderTag = &getShader();
   dynInfo.tag.layout = *pipelineLayout;
   dynInfo.inputAssembly.topology = vk::PrimitiveTopology::eTriangleList;
   dynInfo.rasterization.cullMode = vk::CullModeFlagBits::eNone;
@@ -329,7 +336,7 @@ testComputeDispatch(std::shared_ptr<devices::Device> dev,
   vk::raii::PipelineLayout pipelineLayout{*dev->getDevicePtr(), layoutCI};
 
   pipelines::ComputePipelineInfo compInfo{
-      .tag = {.shaderTag = &g_computeShader, .layout = *pipelineLayout}};
+      .tag = {.shaderTag = &getComputeShader(), .layout = *pipelineLayout}};
   auto compResult = pipelineManager->getOrCreate(compInfo, dev->getDevicePtr());
   checkMsg(compResult.has_value(), "compute pipeline creation failed");
   auto pipeline = *compResult;
@@ -486,12 +493,12 @@ static void testComputeWithGraphicsSingleShader(
 
   // Create swapchain image views
   auto swapchainViews = createSwapchainImageViews(windowInfo, dev);
-  
+
   // ── Render 120 frames ──────────────────────────────────────────────
   int frameCount = 0;
   int w = 0, h = 0;
 
-for (int i = 0; i < 120; ++i) {
+  for (int i = 0; i < 120; ++i) {
     glfwPollEvents();
     glfwGetFramebufferSize(glfwWin, &w, &h);
 
@@ -516,7 +523,8 @@ for (int i = 0; i < 120; ++i) {
         vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
 
     // Get swapchain image
-    auto swapchainImgData = windowInfo->swapchain->getSwapchainImageData(imageIndex);
+    auto swapchainImgData =
+        windowInfo->swapchain->getSwapchainImageData(imageIndex);
     checkMsg(swapchainImgData.has_value(), "missing swapchain image data");
     vk::Image swapchainImage = swapchainImgData->image;
 
@@ -545,18 +553,27 @@ for (int i = 0; i < 120; ++i) {
         vk::AttachmentStoreOp::eStore,
         vk::ClearValue{std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f}}};
     vk::RenderingInfo renderingInfo{
-        {}, vk::Rect2D{{0, 0}, {static_cast<uint32_t>(w), static_cast<uint32_t>(h)}},
-        1, 0, 1, &colorAttachment, nullptr, nullptr};
+        {},
+        vk::Rect2D{{0, 0},
+                   {static_cast<uint32_t>(w), static_cast<uint32_t>(h)}},
+        1,
+        0,
+        1,
+        &colorAttachment,
+        nullptr,
+        nullptr};
     cmd.beginRendering(renderingInfo);
 
     // Draw commands
     cmd.bindVertexBuffers(0, vertexStorage.getBuffer(), {0});
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *gfxPipe);
-    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipelineLayout,
-                           0, *descSet, {});
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipelineLayout, 0,
+                           *descSet, {});
     vk::Viewport vp{0, 0, (float)w, (float)h, 0, 1};
     cmd.setViewport(0, vp);
-    cmd.setScissor(0, vk::Rect2D{{0, 0}, {static_cast<uint32_t>(w), static_cast<uint32_t>(h)}});
+    cmd.setScissor(
+        0, vk::Rect2D{{0, 0},
+                      {static_cast<uint32_t>(w), static_cast<uint32_t>(h)}});
     cmd.draw(3, 1, 0, 0);
 
     cmd.endRendering();
@@ -712,11 +729,11 @@ static void testComputeWithGraphicsMultipleShaders(
 
   // Create swapchain image views
   auto swapchainViews = createSwapchainImageViews(windowInfo, dev);
-  
+
   // Render 120 frames
   int frameCount = 0;
   int w = 0, h = 0;
-    for (int i = 0; i < 120; ++i) {
+  for (int i = 0; i < 120; ++i) {
     glfwPollEvents();
     glfwGetFramebufferSize(glfwWin, &w, &h);
 
@@ -741,7 +758,8 @@ static void testComputeWithGraphicsMultipleShaders(
         vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
 
     // Get swapchain image
-    auto swapchainImgData = windowInfo->swapchain->getSwapchainImageData(imageIndex);
+    auto swapchainImgData =
+        windowInfo->swapchain->getSwapchainImageData(imageIndex);
     checkMsg(swapchainImgData.has_value(), "missing swapchain image data");
     vk::Image swapchainImage = swapchainImgData->image;
 
@@ -770,8 +788,15 @@ static void testComputeWithGraphicsMultipleShaders(
         vk::AttachmentStoreOp::eStore,
         vk::ClearValue{std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f}}};
     vk::RenderingInfo renderingInfo{
-        {}, vk::Rect2D{{0, 0}, {static_cast<uint32_t>(w), static_cast<uint32_t>(h)}},
-        1, 0, 1, &colorAttachment, nullptr, nullptr};
+        {},
+        vk::Rect2D{{0, 0},
+                   {static_cast<uint32_t>(w), static_cast<uint32_t>(h)}},
+        1,
+        0,
+        1,
+        &colorAttachment,
+        nullptr,
+        nullptr};
     cmd.beginRendering(renderingInfo);
 
     // Draw commands
@@ -781,7 +806,9 @@ static void testComputeWithGraphicsMultipleShaders(
                            0, *gfxSet, {});
     vk::Viewport vp{0, 0, (float)w, (float)h, 0, 1};
     cmd.setViewport(0, vp);
-    cmd.setScissor(0, vk::Rect2D{{0, 0}, {static_cast<uint32_t>(w), static_cast<uint32_t>(h)}});
+    cmd.setScissor(
+        0, vk::Rect2D{{0, 0},
+                      {static_cast<uint32_t>(w), static_cast<uint32_t>(h)}});
     cmd.draw(3, 1, 0, 0);
 
     cmd.endRendering();

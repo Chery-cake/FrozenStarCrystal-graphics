@@ -9,16 +9,22 @@ import vulkan_helper;
 using namespace graphics::vulkan;
 
 // --- Shader definition ---------------------------------------------------
-static shaders::Shader g_shader{
-    .entryPoints = {{"vertexMain", vk::ShaderStageFlagBits::eVertex},
-                    {"fragmentMain", vk::ShaderStageFlagBits::eFragment}},
-    .sourcePath = "main.slang"};
+shaders::Shader &getShader() {
+  static shaders::Shader shader{
+      .entryPoints = {{"vertexMain", vk::ShaderStageFlagBits::eVertex},
+                      {"fragmentMain", vk::ShaderStageFlagBits::eFragment}},
+      .sourcePath = "main.slang"};
+  return shader;
+}
 
 // After g_shader definition
 
-static shaders::Shader g_computeShader{
-    .entryPoints = {{"main", vk::ShaderStageFlagBits::eCompute}},
-    .sourcePath = "fill_buffer.slang"};
+shaders::Shader &getComputeShader() {
+  static shaders::Shader shader{
+      .entryPoints = {{"main", vk::ShaderStageFlagBits::eCompute}},
+      .sourcePath = "fill_buffer.slang"};
+  return shader;
+}
 
 // --- GLFW error callback -------------------------------------------------
 static void glfwError(int code, const char *desc) {
@@ -325,7 +331,7 @@ static void testCompositorComputeOnly(
 
   // Create compute pipeline
   pipelines::ComputePipelineInfo compInfo{
-      .tag = {.shaderTag = &g_computeShader, .layout = *pipelineLayout}};
+      .tag = {.shaderTag = &getComputeShader(), .layout = *pipelineLayout}};
   auto compResult =
       pipelineManager->getOrCreate(compInfo, device->getDevicePtr());
   checkMsg(compResult.has_value(), "compute pipeline creation failed");
@@ -458,7 +464,7 @@ static void testCompositorComputeGraphics(
   vk::Format colorFormat = imgData->format;
 
   pipelines::DynamicPipelineInfo dynInfo;
-  dynInfo.tag.shaderTag = &g_shader; // main.slang or graphics_with_ssbo?
+  dynInfo.tag.shaderTag = &getShader(); // main.slang or graphics_with_ssbo?
   // We'll use main.slang because it doesn't need external vertex data.
   // But we need to bind vertex buffer; main.slang uses SV_VertexID and
   // generates its own positions. That would ignore our compute data.

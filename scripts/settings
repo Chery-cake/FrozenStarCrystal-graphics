@@ -28,6 +28,7 @@ APP_NAME="Engine"
 APP_VERSION_MAJOR=0
 APP_VERSION_MINOR=0
 APP_VERSION_PATCH=0
+CMAKE_EXTRA_FLAGS=""
 EOF
     echo "Created default config at $CONFIG_FILE"
 fi
@@ -51,9 +52,10 @@ while [[ $# -gt 0 ]]; do
     --app-version-major)   new[APP_VERSION_MAJOR]="$2"; shift 2 ;;
     --app-version-minor)   new[APP_VERSION_MINOR]="$2"; shift 2 ;;
     --app-version-patch)   new[APP_VERSION_PATCH]="$2"; shift 2 ;;
+    --cmake-extra-flags)  new[CMAKE_EXTRA_FLAGS]="$2"; shift 2 ;;
     *)
         echo "Unknown option: $1" >&2
-        echo "Usage: settings [--build-system Ninja] [--build-type Release|Debug] [--tests ON|OFF] [--sanitizers address,undefined|\"\"] [--lto ON|OFF] [--build-shared-libs ON|OFF] [--warnings-level 0|1|2] [--warnings-as-errors ON|OFF] [--api vulkan] [--app-name name] [--app-version-(major|minor|patch) 0|(version number)]" >&2
+        echo "Usage: settings [--build-system Ninja] [--build-type Release|Debug] [--tests ON|OFF] [--sanitizers address,undefined|\"\"] [--lto ON|OFF] [--build-shared-libs ON|OFF] [--warnings-level 0|1|2] [--warnings-as-errors ON|OFF] [--api vulkan] [--app-name name] [--app-version-(major|minor|patch) 0|(version number)] [--cmake-extra-flags \"\"]" >&2
         exit 1
         ;;
     esac
@@ -72,8 +74,9 @@ done
 # Write the config file
 true > "$CONFIG_FILE"
 for var in BUILD_SYSTEM BUILD_TYPE ENABLE_TESTS SANITIZERS ENABLE_LTO BUILD_SHARED_LIBS \
-            WARNINGS_LEVEL TREAT_WARNINGS_AS_ERRORS; do
-    echo "export $var=${!var}" >> "$CONFIG_FILE"
+            WARNINGS_LEVEL TREAT_WARNINGS_AS_ERRORS API APP_NAME APP_VERSION_MAJOR \
+            APP_VERSION_MINOR APP_VERSION_PATCH CMAKE_EXTRA_FLAGS; do
+    printf "export %s='%s'\n" "$var" "${!var}" >> "$CONFIG_FILE"
 done
 
 if [ $initial_args -ne 0 ]; then
@@ -96,3 +99,4 @@ echo "  APP_NAME                 = $APP_NAME"
 echo "  APP_VERSION_MAJOR        = $APP_VERSION_MAJOR"
 echo "  APP_VERSION_MINOR        = $APP_VERSION_MINOR"
 echo "  APP_VERSION_PATCH        = $APP_VERSION_PATCH"
+echo "  CMAKE_EXTRA_FLAGS        = $CMAKE_EXTRA_FLAGS"

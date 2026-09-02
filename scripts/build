@@ -16,13 +16,24 @@ fi
 
 cd "$PROJECT_ROOT"
 
-# Run CMake configuration with the same options as before
-cmake -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
-      -DENABLE_TESTS="$ENABLE_TESTS" \
-      -DSANITIZERS="$SANITIZERS" \
-      -DENABLE_LTO="$ENABLE_LTO" \
-      -DBUILD_SHARED_LIBS="$BUILD_SHARED_LIBS" \
-      -DWARNINGS_LEVEL="$WARNINGS_LEVEL" \
-      -DTREAT_WARNINGS_AS_ERRORS="$TREAT_WARNINGS_AS_ERRORS" \
-      -DGRAPHICS_API="$API" \
-      -B build -G "$BUILD_SYSTEM"
+# Build base cmake command
+CMAKE_ARGS=(
+    -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
+    -DENABLE_TESTS="$ENABLE_TESTS"
+    -DSANITIZERS="$SANITIZERS"
+    -DENABLE_LTO="$ENABLE_LTO"
+    -DBUILD_SHARED_LIBS="$BUILD_SHARED_LIBS"
+    -DWARNINGS_LEVEL="$WARNINGS_LEVEL"
+    -DTREAT_WARNINGS_AS_ERRORS="$TREAT_WARNINGS_AS_ERRORS"
+    -DGRAPHICS_API="$API"
+)
+
+
+if [ -n "$CMAKE_EXTRA_FLAGS" ]; then
+    # Split the string into words and add to array
+    read -r -a EXTRA_ARGS <<< "$CMAKE_EXTRA_FLAGS"
+    CMAKE_ARGS+=("${EXTRA_ARGS[@]}")
+fi
+
+# Run CMake configuration
+cmake "${CMAKE_ARGS[@]}" -B build -G "$BUILD_SYSTEM"

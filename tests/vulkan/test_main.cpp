@@ -14,10 +14,13 @@ import concurrency;
 using namespace graphics::vulkan;
 
 // --- Shader definition --------------------------------------------------
-static shaders::Shader g_shader{
-    .entryPoints = {{"vertexMain", vk::ShaderStageFlagBits::eVertex},
-                    {"fragmentMain", vk::ShaderStageFlagBits::eFragment}},
-    .sourcePath = "main.slang"};
+shaders::Shader &getShader() {
+  static shaders::Shader shader{
+      .entryPoints = {{"vertexMain", vk::ShaderStageFlagBits::eVertex},
+                      {"fragmentMain", vk::ShaderStageFlagBits::eFragment}},
+      .sourcePath = "main.slang"};
+  return shader;
+}
 
 // --- Helper to convert a VkResult into an exception ---------------------
 static void check(VkResult result, const char *msg) {
@@ -103,7 +106,7 @@ int main() {
 
     // 9. Build the dynamic pipeline info
     pipelines::DynamicPipelineInfo dynamicInfo;
-    dynamicInfo.tag.shaderTag = &g_shader;
+    dynamicInfo.tag.shaderTag = &getShader();
     dynamicInfo.tag.layout = *pipelineLayout; // raw handle
     dynamicInfo.tag.flags = {};
     dynamicInfo.inputAssembly.topology = vk::PrimitiveTopology::eTriangleList;

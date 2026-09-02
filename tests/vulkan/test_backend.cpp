@@ -9,16 +9,23 @@ import vulkan_helper;
 using namespace graphics::vulkan;
 
 // --- Shader definition ---------------------------------------------------
-static shaders::Shader g_shader{
-    .entryPoints = {{"vertexMain", vk::ShaderStageFlagBits::eVertex},
-                    {"fragmentMain", vk::ShaderStageFlagBits::eFragment}},
-    .sourcePath = "main.slang"};
+
+shaders::Shader &getShader() {
+  static shaders::Shader shader{
+      .entryPoints = {{"vertexMain", vk::ShaderStageFlagBits::eVertex},
+                      {"fragmentMain", vk::ShaderStageFlagBits::eFragment}},
+      .sourcePath = "main.slang"};
+  return shader;
+}
 
 // After g_shader definition
 
-static shaders::Shader g_computeShader{
-    .entryPoints = {{"main", vk::ShaderStageFlagBits::eCompute}},
-    .sourcePath = "fill_buffer.slang"};
+shaders::Shader &getComputeShader() {
+  static shaders::Shader shader{
+      .entryPoints = {{"main", vk::ShaderStageFlagBits::eCompute}},
+      .sourcePath = "fill_buffer.slang"};
+  return shader;
+}
 
 // --- GLFW error callback -------------------------------------------------
 static void glfwError(int code, const char *desc) {
@@ -452,17 +459,17 @@ static void testShaderManager(std::shared_ptr<devices::Device> dev,
                               std::shared_ptr<shaders::Manager> manager) {
   checkMsg(dev != nullptr, "getFirstDevice() returned nullptr");
 
-  auto result = manager->loadShader(&g_shader, dev->getDevicePtr());
+  auto result = manager->loadShader(&getShader(), dev->getDevicePtr());
   if (result) {
     checkMsg(*result != nullptr, "loadShader returned null module");
 
-    auto mod = manager->getModule(&g_shader, dev->getDevicePtr());
+    auto mod = manager->getModule(&getShader(), dev->getDevicePtr());
     // mod may be null if device registry race, just call it
     (void)mod;
 
-    manager->unloadShader(&g_shader, dev->getDevicePtr());
+    manager->unloadShader(&getShader(), dev->getDevicePtr());
 
-    manager->reloadShader(&g_shader);
+    manager->reloadShader(&getShader());
     std::cout << "[PASS] testShaderManager\n";
   } else {
     std::cout << "[INFO] testShaderManager: loadShader failed ("
@@ -470,7 +477,7 @@ static void testShaderManager(std::shared_ptr<devices::Device> dev,
   }
 
   // Always safe to call
-  manager->unloadShaderAllDevice(&g_shader);
+  manager->unloadShaderAllDevice(&getShader());
   std::cout << "[PASS] testShaderManager (unloadShaderAllDevice)\n";
 }
 
@@ -502,7 +509,7 @@ testPipelineManager(std::shared_ptr<pipelines::Manager> pipelineManager,
       vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
 
   pipelines::DynamicPipelineInfo dynInfo{
-      .tag = {.shaderTag = &g_shader, .layout = *layout},
+      .tag = {.shaderTag = &getShader(), .layout = *layout},
       .inputAssembly = {.topology = vk::PrimitiveTopology::eTriangleList},
       .rasterization = {.cullMode = vk::CullModeFlagBits::eNone},
       .depthStencil = {.depthTest = vk::False, .depthWrite = vk::False},
@@ -543,7 +550,7 @@ testPipelineManager(std::shared_ptr<pipelines::Manager> pipelineManager,
     vk::raii::RenderPass renderPass{*dev->getDevicePtr(), rpCreateInfo};
 
     pipelines::StaticPipelineInfo staticInfo;
-    staticInfo.tag.shaderTag = &g_shader;
+    staticInfo.tag.shaderTag = &getShader();
     staticInfo.tag.layout = *layout;
     staticInfo.inputAssembly.topology = vk::PrimitiveTopology::eTriangleList;
     staticInfo.rasterization.cullMode = vk::CullModeFlagBits::eNone;
@@ -585,7 +592,7 @@ testPipelineManager(std::shared_ptr<pipelines::Manager> pipelineManager,
   vk::raii::PipelineLayout compLayout{*dev->getDevicePtr(), compLayoutCI};
 
   pipelines::ComputePipelineInfo compInfo{
-      .tag = {.shaderTag = &g_computeShader, .layout = *compLayout}};
+      .tag = {.shaderTag = &getComputeShader(), .layout = *compLayout}};
 
   auto compResult = pipelineManager->getOrCreate(compInfo, dev->getDevicePtr());
   if (!compResult) {
@@ -603,8 +610,8 @@ testPipelineManager(std::shared_ptr<pipelines::Manager> pipelineManager,
   }
 
   // Clean up invalidation
-  pipelineManager->invalidateShader(&g_shader);
-  pipelineManager->invalidateShader(&g_computeShader);
+  pipelineManager->invalidateShader(&getShader());
+  pipelineManager->invalidateShader(&getComputeShader());
 }
 
 // =========================================================================

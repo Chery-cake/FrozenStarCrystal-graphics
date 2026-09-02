@@ -60,6 +60,13 @@
 
         # Hardening: disable only "fortify" (keep everything else that nixpkgs enables)
         hardeningDisableFortify = "stackprotector pie pic strictoverflow format relro bindnow";
+
+        # Extra CMake flags for this environment (Clang + LTO)
+        extraFlags = builtins.concatStringsSep " " [
+          "-DCMAKE_CXX_COMPILER_AR=${llvmTools}/bin/llvm-ar"
+          "-DCMAKE_CXX_COMPILER_RANLIB=${llvmTools}/bin/llvm-ranlib"
+          "-DCMAKE_LINKER_TYPE=LLD"
+        ];
       in
       {
         devShells.default = pkgs.mkShell {
@@ -72,6 +79,7 @@
             cmake
             pkgs.ninja
             glibcDev
+            llvmTools
 
             pkgs.tbb.dev
             pkgs.vulkan-loader
@@ -154,19 +162,7 @@
             TBB_DIR = "${pkgs.tbb.dev}/lib/cmake/TBB";
             CXX_MODULES_JSON = "${gccUnwrapped}/lib/libstdc++.modules.json";
 
-            BUILD_TYPE = "Debug";
-            ENABLE_TESTS = "ON";
-            SANITIZERS = "address,undefined";
-            ENABLE_LTO = "ON";
-            BUILD_SHARED_LIBS = "ON";
-            WARNINGS_LEVEL = 2;
-            TREAT_WARNINGS_AS_ERRORS = "OFF";
-            API = "vulkan";
-
-            APP_NAME = "Engine";
-            APP_VERSION_MAJOR = 0;
-            APP_VERSION_MINOR = 0;
-            APP_VERSION_PATCH = 0;
+            USE_LLVM_LTO = "1";
 
             # Disable fortify hardening only
             NIX_HARDENING_ENABLE = hardeningDisableFortify;
@@ -181,7 +177,7 @@
             echo "C compiler:   $CC   ($( $CC   --version | head -n1 ))"
             echo "C++ compiler: $CXX ($( $CXX --version | head -n1 ))"
 
-            settings
+            settings --cmake-extra-flags "${extraFlags}"
           '';
         };
       }

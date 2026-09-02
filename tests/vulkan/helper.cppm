@@ -272,10 +272,13 @@ export {
   };
 
   // New shader for fullscreen blend
-  shaders::Shader g_fullscreenShader{
-      .entryPoints = {{"vs_main", vk::ShaderStageFlagBits::eVertex},
-                      {"fs_main", vk::ShaderStageFlagBits::eFragment}},
-      .sourcePath = "fullscreen.slang"}; // assumes this file exists
+  inline shaders::Shader &getFullscreenShader() {
+    static shaders::Shader shader{
+        .entryPoints = {{"vs_main", vk::ShaderStageFlagBits::eVertex},
+                        {"fs_main", vk::ShaderStageFlagBits::eFragment}},
+        .sourcePath = "fullscreen.slang"};
+    return shader;
+  }
 
   // BlendScene – draws fullscreen triangle with blending
   class BlendScene {
@@ -356,7 +359,7 @@ export {
           vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
 
       pipelines::DynamicPipelineInfo dynInfo;
-      dynInfo.tag.shaderTag = &g_fullscreenShader;
+      dynInfo.tag.shaderTag = &getFullscreenShader();
       dynInfo.tag.layout = **pipelineLayout_;
       dynInfo.inputAssembly.topology = vk::PrimitiveTopology::eTriangleList;
       dynInfo.rasterization.cullMode = vk::CullModeFlagBits::eNone;
