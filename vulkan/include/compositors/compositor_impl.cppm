@@ -25,8 +25,8 @@ SceneId Compositor<Target>::addScene(S &&scene) {
   std::unique_lock lock(mtx_);
   SceneId id = nextSceneId_;
   nextSceneId_ = nextSceneId_.next();
-  sceneEntries_.emplace_back(
-      id,
+
+  auto factory = std::make_shared<SceneTaskFactory>(
       [scene = std::forward<S>(scene)](const FrameContext &frame) mutable
           -> concurrency::pool::coroutine::CoroutineTask<
               concurrency::pool::coroutine::policy::Suspend::Never, void> {
@@ -34,6 +34,8 @@ SceneId Compositor<Target>::addScene(S &&scene) {
         co_await scene.record(frame);
         scene.endRecord(frame);
       });
+
+  sceneEntries_.emplace_back(id, std::move(factory));
   return id;
 }
 
@@ -44,14 +46,14 @@ SceneId Compositor<Target>::addScene(S &&scene, Position pos) {
   SceneId id = nextSceneId_;
   nextSceneId_ = nextSceneId_.next();
 
-  auto factory = [scene =
-                      std::forward<S>(scene)](const FrameContext &frame) mutable
-      -> concurrency::pool::coroutine::CoroutineTask<
-          concurrency::pool::coroutine::policy::Suspend::Never, void> {
-    scene.beginRecord(frame);
-    co_await scene.record(frame);
-    scene.endRecord(frame);
-  };
+  auto factory = std::make_shared<SceneTaskFactory>(
+      [scene = std::forward<S>(scene)](const FrameContext &frame) mutable
+          -> concurrency::pool::coroutine::CoroutineTask<
+              concurrency::pool::coroutine::policy::Suspend::Never, void> {
+        scene.beginRecord(frame);
+        co_await scene.record(frame);
+        scene.endRecord(frame);
+      });
 
   switch (pos) {
   case Position::START: {
@@ -107,13 +109,19 @@ Compositor<Target>::render() {
   co_await device_
       ->schedule<concurrency::pool::coroutine::policy::Queue::Enqueue>();
 
+  std::vector<SceneEntry> snapshot;
+  {
+    std::shared_lock lock(mtx_);
+    snapshot = sceneEntries_;
+  }
+
   FrameContext frame = target_.beginFrame();
   if (!frame.valid) {
     co_return false;
   }
 
-  for (auto &&[id, factory] : sceneEntries_) {
-    co_await factory(frame);
+  for (SceneEntry &entry : snapshot) {
+    co_await (*entry.factory)(frame);
   }
 
   target_.endFrame(frame);

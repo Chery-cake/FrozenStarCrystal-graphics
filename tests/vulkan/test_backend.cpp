@@ -269,40 +269,53 @@ static void testBufferTransfer(std::shared_ptr<devices::Device> dev) {
 
   using Access = devices::BufferCreateInfo::Access;
 
+  int x = 0;
+
+  std::println("test: {}", x++);
+
   auto src = dev->createBuffer(
       devices::BufferCreateInfo{.size = 128,
                                 .usage = vk::BufferUsageFlagBits::eTransferSrc,
                                 .access = Access::stagingUpload,
                                 .debugName = "transfer_src"});
+  std::println("test: {}", x++);
   auto dst = dev->createBuffer(
       devices::BufferCreateInfo{.size = 128,
                                 .usage = vk::BufferUsageFlagBits::eTransferDst,
                                 .access = Access::stagingReadback,
                                 .debugName = "transfer_dst"});
-
+  std::println("test: {}", x++);
   // Fill src
   {
     auto *p = static_cast<uint8_t *>(src.map());
     checkMsg(p != nullptr, "src.map() returned null");
+    std::println("test: {}", x++);
     for (int i = 0; i < 128; ++i) {
       p[i] = static_cast<uint8_t>(i);
     }
+    std::println("test: {}", x++);
     src.flush();
+    std::println("test: {}", x++);
     src.unmap();
   }
 
+  std::println("test: {}", x++);
   auto task = devices::transfer(dev, src, 0, dst, 0, 128);
+  std::println("test: {}", x++);
   task.get();
+  std::println("test: {}", x++);
 
   // Verify
   {
     dst.invalidate();
     auto *p = static_cast<const uint8_t *>(dst.map());
     checkMsg(p != nullptr, "dst.map() returned null");
+    std::println("test: {}", x++);
     for (int i = 0; i < 128; ++i) {
       checkMsg(p[i] == static_cast<uint8_t>(i),
                "testBufferTransfer: byte mismatch");
     }
+    std::println("test: {}", x++);
     dst.unmap();
   }
 

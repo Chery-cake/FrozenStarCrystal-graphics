@@ -25,10 +25,10 @@ class FROZENSTARCRYSTAL_GRAPHICS_API Compositor {
 public:
   struct SceneEntry {
     SceneId id;
-    SceneTaskFactory factory;
+    std::shared_ptr<SceneTaskFactory> factory;
   };
 
-  enum class Position {
+  enum class Position : uint8_t {
     START,
     END,
   };
@@ -40,7 +40,7 @@ private:
   std::vector<SceneEntry> sceneEntries_;
 
   SceneId nextSceneId_{1};
-  mutable std::mutex mtx_;
+  mutable std::shared_mutex mtx_;
 
 public:
   explicit Compositor(Target &&target,
