@@ -9,14 +9,14 @@ include(FetchContent)
 
 # Set FetchContent options
 set(FETCHCONTENT_QUIET OFF)
-set(FETCHCONTENT_UPDATES_DISCONNECTED ON)
+#set(FETCHCONTENT_UPDATES_DISCONNECTED ON)
 
 FetchContent_Declare(
   frozenStarCrystal-core
   GIT_REPOSITORY https://github.com/Chery-cake/FrozenStarCrystal-core.git
   GIT_TAG master
-  GIT_SHALLOW TRUE
-  GIT_PROGRESS true
+  #GIT_SHALLOW TRUE
+  GIT_PROGRESS TRUE
 )
 FetchContent_MakeAvailable(frozenStarCrystal-core)
 

@@ -115,3 +115,5 @@ build/
 bin/
 *.clangd
 *.fsc_config
+perf.data
+*/perf.data

@@ -55,7 +55,7 @@ while [[ $# -gt 0 ]]; do
     --cmake-extra-flags)  new[CMAKE_EXTRA_FLAGS]="$2"; shift 2 ;;
     *)
         echo "Unknown option: $1" >&2
-        echo "Usage: settings [--build-system Ninja] [--build-type Release|Debug] [--tests ON|OFF] [--sanitizers address,undefined|\"\"] [--lto ON|OFF] [--build-shared-libs ON|OFF] [--warnings-level 0|1|2] [--warnings-as-errors ON|OFF] [--api vulkan] [--app-name name] [--app-version-(major|minor|patch) 0|(version number)] [--cmake-extra-flags \"\"]" >&2
+        echo "Usage: settings [--build-system Ninja] [--build-type Release|Debug] [--tests ON|OFF] [--sanitizers address,leak,thread,undefined,memory|\"\"] [--lto ON|OFF] [--build-shared-libs ON|OFF] [--warnings-level 0|1|2] [--warnings-as-errors ON|OFF] [--api vulkan] [--app-name name] [--app-version-(major|minor|patch) 0|(version number)] [--cmake-extra-flags \"\"]" >&2
         exit 1
         ;;
     esac

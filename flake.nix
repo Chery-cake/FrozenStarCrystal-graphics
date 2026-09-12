@@ -80,6 +80,7 @@
             pkgs.ninja
             glibcDev
             llvmTools
+            pkgs.perf
 
             pkgs.tbb.dev
             pkgs.vulkan-loader
