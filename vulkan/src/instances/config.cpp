@@ -30,6 +30,7 @@ void Config::resetToDefaults() {
   instanceExtensions.emplace_back(vk::KHRWin32SurfaceExtensionName);
 #elif defined(__linux__)
   instanceExtensions.emplace_back(vk::KHRXcbSurfaceExtensionName);
+  instanceExtensions.emplace_back("VK_KHR_xlib_surface");
   instanceExtensions.emplace_back(vk::KHRWaylandSurfaceExtensionName);
 #elif defined(__APPLE__)
   instanceExtensions.emplace_back(vk::EXTMetalSurfaceExtensionName);

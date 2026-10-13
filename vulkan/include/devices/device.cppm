@@ -2,8 +2,6 @@ module;
 
 #include "FrozenStarCrystal-graphics_export.h"
 
-#include <vk_mem_alloc.h>
-
 export module graphics.vulkan.devices:device;
 
 import std.compat;
@@ -158,7 +156,7 @@ public:
 
   void advanceFrameIndex() {
     ++frameIndex_;
-    vmaSetCurrentFrameIndex(**allocator_, frameIndex_);
+    allocator_->setCurrentFrameIndex(frameIndex_);
   }
 
   [[nodiscard]] uint64_t getFrameIndex() const { return frameIndex_; }

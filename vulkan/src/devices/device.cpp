@@ -1,7 +1,6 @@
 module;
 
 #include <cstdint>
-#include <vk_mem_alloc.h>
 
 module graphics.vulkan.devices;
 
@@ -223,7 +222,7 @@ Device::Device(const vk::raii::Instance &instance,
       vma::raii::createAllocator(instance, *device_, allocatorInfo));
 
   // Initialize VMA frame index before any allocations
-  vmaSetCurrentFrameIndex(**allocator_, 0);
+  allocator_->setCurrentFrameIndex(0);
 
   std::println("[Device] Initialized: {}", info.name);
 }
