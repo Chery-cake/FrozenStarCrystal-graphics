@@ -23,8 +23,8 @@ function(add_tests_from_folder FOLDER)
     set(multiValueArgs LIBRARY DEPENDENCY)
     cmake_parse_arguments(ARG "" "" "${multiValueArgs}" ${ARGN})
 
-    file(GLOB test_files CONFIGURE_DEPENDS "${FOLDER}/test*.c*")
-    file(GLOB helper CONFIGURE_DEPENDS "${FOLDER}/helper*.c*")
+    file(GLOB_RECURSE test_files CONFIGURE_DEPENDS "${FOLDER}/test*.c*")
+    file(GLOB_RECURSE helper CONFIGURE_DEPENDS "${FOLDER}/helper*.c*")
 
     foreach(test_file ${test_files})
         get_filename_component(TEST_EXE ${test_file} NAME_WE)
