@@ -160,6 +160,10 @@ public:
         .format = info_.surfaceFormat.format,
     };
   }
+
+  [[nodiscard]] uint32_t currentFrameSlot() const noexcept {
+    return currentFrame_;
+  }
 };
 
 } // namespace graphics::vulkan::devices

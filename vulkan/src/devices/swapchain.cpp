@@ -406,7 +406,10 @@ std::expected<vk::Result, Swapchain::PresentError> Swapchain::submitAndPresent(
   }
 
   // Submit everything
-  queue.submit(infos, inFlightFences_[currentFrame_]);
+  {
+    std::lock_guard lk(owner_->graphicsQueueMtx());
+    queue.submit(infos, inFlightFences_[currentFrame_]);
+  }
 
   // Present using the renderFinished semaphore
   vk::PresentInfoKHR presentInfo{};
@@ -418,6 +421,7 @@ std::expected<vk::Result, Swapchain::PresentError> Swapchain::submitAndPresent(
 
   vk::Result result;
   try {
+    std::lock_guard lk(owner_->graphicsQueueMtx());
     result = presentQueue_.presentKHR(presentInfo);
   } catch (const vk::OutOfDateKHRError &) {
     needRecreation_.store(true, std::memory_order_release);
@@ -466,7 +470,10 @@ vk::Result Swapchain::submitAndWait(vk::Queue queue,
     }
     device_->resetFences(*waitFences_[currentWait_]);
 
-    queue.submit(infos, waitFences_[currentWait_]);
+    {
+      std::lock_guard lc(owner_->graphicsQueueMtx());
+      queue.submit(infos, waitFences_[currentWait_]);
+    }
 
     wait = currentWait_;
 
