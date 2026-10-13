@@ -24,15 +24,12 @@ BufferArrayRegistry::BufferArrayRegistry(
 
   uint32_t totalSlots = 0;
   std::ranges::for_each(
-      sortedBindings |
-          std::views::transform(
-              [&channels = channels_](uint32_t i) { return channels.at(i); }) |
-          std::views::enumerate,
-      [&bindings, &bindingFlags, &totalSlots](const auto &pair) {
-        auto &&[i, state] = pair;
+      sortedBindings, [&bindings, &bindingFlags, &totalSlots,
+                       &channels = channels_](uint32_t binding) {
+        ChannelState &state = channels.at(binding);
 
         vk::DescriptorSetLayoutBinding lb{};
-        lb.binding = i;
+        lb.binding = binding;
         lb.descriptorType = vk::DescriptorType::eStorageBuffer;
         lb.descriptorCount = state.desc.maxSlots;
         lb.stageFlags = vk::ShaderStageFlagBits::eAll;

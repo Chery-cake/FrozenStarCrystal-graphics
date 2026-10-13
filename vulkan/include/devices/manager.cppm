@@ -29,7 +29,7 @@ private:
 
   std::vector<DeviceEntry> deviceEntries_;
 
-  std::shared_ptr<concurrency::pool::ThreadPool> gpuPool_;
+  std::shared_ptr<GPUPool> gpuPool_;
 
   mutable std::mutex mtx_;
 
@@ -92,11 +92,13 @@ public:
   }
 
   template <concurrency::pool::coroutine::policy::Queue QP =
-                concurrency::pool::coroutine::policy::Queue::Inline>
-  [[nodiscard]] concurrency::pool::coroutine::Scheduler<QP>
-  scheduleOnDevice(uint32_t deviceIndex) {
+                concurrency::pool::coroutine::policy::Queue::Inline,
+            typename... PushArgs>
+  [[nodiscard]] auto scheduleOnDevice(uint32_t deviceIndex,
+                                      PushArgs &&...args) {
     std::unique_lock lock(mtx_);
-    return deviceEntries_.at(deviceIndex).device->schedule<QP>();
+    return deviceEntries_.at(deviceIndex)
+        .device->schedule<QP>(std::forward<PushArgs>(args)...);
   }
 
   template <typename F>

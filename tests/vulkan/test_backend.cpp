@@ -176,8 +176,8 @@ static void testDeviceAccessors(std::shared_ptr<devices::Device> dev) {
   checkMsg(dev->getDevice() != vk::Device{}, "getDevice() handle is null");
   checkMsg(dev->getPhysicalDevice() != vk::PhysicalDevice{},
            "getPhysicalDevice() handle is null");
-  dev->getRaiiDevice();         // no crash
-  dev->getRaiiPhysicalDevice(); // no crash
+  (void)dev->getRaiiDevice();         // no crash
+  (void)dev->getRaiiPhysicalDevice(); // no crash
   checkMsg(dev->getAllocator() != vma::Allocator{}, "getAllocator() is null");
 
   checkMsg(!dev->getInfo().name.empty(), "device name is empty");
@@ -195,9 +195,9 @@ static void testDeviceAccessors(std::shared_ptr<devices::Device> dev) {
   auto result = dev->submit([] { return 42; }).get();
   checkMsg(result == 42, "submit() result mismatch");
 
-  dev->getGraphicsPool(); // no crash
-  dev->getComputePool();  // no crash
-  dev->getTransferPool(); // no crash
+  (void)dev->getGraphicsPool(); // no crash
+  (void)dev->getComputePool();  // no crash
+  (void)dev->getTransferPool(); // no crash
 
   std::cout << "[PASS] testDeviceAccessors\n";
 }

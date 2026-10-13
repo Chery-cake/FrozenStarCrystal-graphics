@@ -27,9 +27,8 @@ SceneId Compositor<Target>::addScene(S &&scene) {
   nextSceneId_ = nextSceneId_.next();
 
   auto factory = std::make_shared<SceneTaskFactory>(
-      [scene = std::forward<S>(scene)](const FrameContext &frame) mutable
-          -> concurrency::pool::coroutine::CoroutineTask<
-              concurrency::pool::coroutine::policy::Suspend::Never, void> {
+      [scene = std::forward<S>(scene)](
+          const FrameContext &frame) mutable -> devices::GPUCoroTask<void> {
         scene.beginRecord(frame);
         co_await scene.record(frame);
         scene.endRecord(frame);
@@ -47,9 +46,8 @@ SceneId Compositor<Target>::addScene(S &&scene, Position pos) {
   nextSceneId_ = nextSceneId_.next();
 
   auto factory = std::make_shared<SceneTaskFactory>(
-      [scene = std::forward<S>(scene)](const FrameContext &frame) mutable
-          -> concurrency::pool::coroutine::CoroutineTask<
-              concurrency::pool::coroutine::policy::Suspend::Never, void> {
+      [scene = std::forward<S>(scene)](
+          const FrameContext &frame) mutable -> devices::GPUCoroTask<void> {
         scene.beginRecord(frame);
         co_await scene.record(frame);
         scene.endRecord(frame);
@@ -102,9 +100,7 @@ bool Compositor<Target>::removeScenes(const std::span<const SceneId> &ids) {
 }
 
 template <RenderTargetPolicy Target>
-concurrency::pool::coroutine::CoroutineTask<
-    concurrency::pool::coroutine::policy::Suspend::Never, bool>
-Compositor<Target>::render() {
+devices::GPUCoroTask<bool> Compositor<Target>::render() {
   // Run the whole frame on a single GPU worker thread.
   co_await device_
       ->schedule<concurrency::pool::coroutine::policy::Queue::Enqueue>();

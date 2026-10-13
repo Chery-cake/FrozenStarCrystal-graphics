@@ -176,8 +176,8 @@ Manager::Manager(const std::shared_ptr<vk::raii::Instance> &instance,
                  const std::shared_ptr<concurrency::pool::Manager> &poolManager)
     : instance_(instance) {
 
-  bool created = poolManager->createPool(&gpuPoolDesc);
-  gpuPool_ = poolManager->getPool(&gpuPoolDesc).lock();
+  bool created = poolManager->createPool<GPUPoolQueue, GPUTask>(&gpuPoolDesc);
+  gpuPool_ = poolManager->getPool<GPUPoolQueue, GPUTask>(&gpuPoolDesc);
 
   auto infoDev = enumeratePhysicalDevices(instance.get());
 

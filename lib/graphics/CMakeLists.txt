@@ -54,7 +54,7 @@ elseif(UNIX)
 endif()
 
 add_library(vk vulkan.cpp)
-target_include_directories(vk PUBLIC
+target_include_directories(vk SYSTEM PUBLIC
     ${vulkan_hpp_SOURCE_DIR}/Vulkan-Headers/include
     ${vulkan_hpp_SOURCE_DIR}/vulkan
 )
@@ -100,6 +100,10 @@ FetchContent_MakeAvailable(_vma_hpp)
 #get_target_property(_vma_hpp_module_real VulkanMemoryAllocator-Hpp::VulkanMemoryAllocator-HppModule ALIASED_TARGET)
 
 add_library(vma vma.cpp)
+target_include_directories(vma SYSTEM PUBLIC
+    "${_vma_hpp_SOURCE_DIR}/VulkanMemoryAllocator/include"
+    "${_vma_hpp_SOURCE_DIR}/include"
+)
 target_link_libraries(vma PUBLIC
   vk
   GPUOpen::VulkanMemoryAllocator

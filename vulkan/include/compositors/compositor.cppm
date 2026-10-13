@@ -16,9 +16,7 @@ import concurrency;
 export namespace graphics::vulkan::compositors {
 
 using SceneTaskFactory =
-    std::move_only_function<concurrency::pool::coroutine::CoroutineTask<
-        concurrency::pool::coroutine::policy::Suspend::Never, void>(
-        const FrameContext &)>;
+    std::move_only_function<devices::GPUCoroTask<void>(const FrameContext &)>;
 
 template <RenderTargetPolicy Target>
 class FROZENSTARCRYSTAL_GRAPHICS_API Compositor {
@@ -62,9 +60,7 @@ public:
   bool removeScenes(const std::span<const SceneId> &ids);
 
   // Render all scenes in vector order.
-  concurrency::pool::coroutine::CoroutineTask<
-      concurrency::pool::coroutine::policy::Suspend::Never, bool>
-  render();
+  devices::GPUCoroTask<bool> render();
   // Access to target for resize etc.
   Target &target() { return target_; }
   const Target &target() const { return target_; }

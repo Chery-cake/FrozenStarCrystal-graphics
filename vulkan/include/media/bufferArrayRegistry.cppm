@@ -50,8 +50,8 @@ public:
 
   BufferArrayRegistry(const BufferArrayRegistry &) = delete;
   BufferArrayRegistry &operator=(const BufferArrayRegistry &) = delete;
-  BufferArrayRegistry(BufferArrayRegistry &&) noexcept = default;
-  BufferArrayRegistry &operator=(BufferArrayRegistry &&) noexcept = default;
+  BufferArrayRegistry(BufferArrayRegistry &&) noexcept = delete;
+  BufferArrayRegistry &operator=(BufferArrayRegistry &&) noexcept = delete;
 
   void defineChannel(ChannelDesc desc);
 

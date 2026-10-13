@@ -180,8 +180,7 @@ export {
       // No-op; the render target already set up the layout.
     }
 
-    concurrency::pool::coroutine::CoroutineTask<
-        concurrency::pool::coroutine::policy::Suspend::Never, void>
+    devices::GPUCoroTask<void>
     record(const graphics::vulkan::compositors::FrameContext &frame) {
       // Record drawing commands into frame.cmd
       vk::RenderingAttachmentInfo colorAtt{
@@ -226,8 +225,7 @@ export {
       // No-op
     }
 
-    concurrency::pool::coroutine::CoroutineTask<
-        concurrency::pool::coroutine::policy::Suspend::Never, void>
+    devices::GPUCoroTask<void>
     record(const graphics::vulkan::compositors::FrameContext &frame) {
       // Begin rendering with loadOp=eLoad to preserve existing content
       vk::RenderingAttachmentInfo colorAtt{
@@ -294,8 +292,7 @@ export {
       // No-op
     }
 
-    concurrency::pool::coroutine::CoroutineTask<
-        concurrency::pool::coroutine::policy::Suspend::Never, void>
+    devices::GPUCoroTask<void>
     record(const graphics::vulkan::compositors::FrameContext &frame) {
       // Begin rendering with loadOp=eLoad (preserve existing)
       vk::RenderingAttachmentInfo colorAtt{
@@ -404,8 +401,7 @@ export {
 
     void beginRecord(const graphics::vulkan::compositors::FrameContext &) {}
 
-    concurrency::pool::coroutine::CoroutineTask<
-        concurrency::pool::coroutine::policy::Suspend::Never, void>
+    devices::GPUCoroTask<void>
     record(const graphics::vulkan::compositors::FrameContext &frame) {
       // Bind and dispatch compute
       frame.cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *pipeline_);
@@ -472,8 +468,7 @@ export {
 
     void beginRecord(const graphics::vulkan::compositors::FrameContext &) {}
 
-    concurrency::pool::coroutine::CoroutineTask<
-        concurrency::pool::coroutine::policy::Suspend::Never, void>
+    devices::GPUCoroTask<void>
     record(const graphics::vulkan::compositors::FrameContext &frame) {
       // Begin rendering with loadOp=eLoad (preserve default clear)
       vk::RenderingAttachmentInfo colorAtt{
@@ -534,8 +529,7 @@ export {
 
     void beginRecord(const graphics::vulkan::compositors::FrameContext &) {}
 
-    concurrency::pool::coroutine::CoroutineTask<
-        concurrency::pool::coroutine::policy::Suspend::Never, void>
+    devices::GPUCoroTask<void>
     record(const graphics::vulkan::compositors::FrameContext &frame) {
       frame.cmd.bindPipeline(vk::PipelineBindPoint::eCompute, pipeline_);
       frame.cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, layout_, 0,
@@ -583,8 +577,7 @@ export {
           count_(count) {}
 
     void beginRecord(const graphics::vulkan::compositors::FrameContext &) {}
-    concurrency::pool::coroutine::CoroutineTask<
-        concurrency::pool::coroutine::policy::Suspend::Never, void>
+    devices::GPUCoroTask<void>
     record(const graphics::vulkan::compositors::FrameContext &frame) {
       vk::RenderingAttachmentInfo colorAtt{
           frame.view,
@@ -640,8 +633,7 @@ export {
 
     void beginRecord(const graphics::vulkan::compositors::FrameContext &) {}
 
-    concurrency::pool::coroutine::CoroutineTask<
-        concurrency::pool::coroutine::policy::Suspend::Never, void>
+    devices::GPUCoroTask<void>
     record(const graphics::vulkan::compositors::FrameContext &frame) {
       frame.cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *pipeline_);
       frame.cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, layout_, 0,

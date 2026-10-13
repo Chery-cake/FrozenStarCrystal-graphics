@@ -33,7 +33,7 @@ private:
   vk::Queue sparseBidingQueue_;
   vk::Queue protectedQueue_;
 
-  std::shared_ptr<concurrency::pool::ThreadPool> gpuPool_;
+  std::shared_ptr<GPUPool> gpuPool_;
 
   mutable std::mutex deviceMtx_;
 
@@ -67,8 +67,7 @@ private:
 
 public:
   Device(const vk::raii::Instance &instance, vk::PhysicalDevice physicalDevice,
-         const GPUInfo &info,
-         const std::shared_ptr<concurrency::pool::ThreadPool> &gpuPool);
+         const GPUInfo &info, const std::shared_ptr<GPUPool> &gpuPool);
   ~Device();
 
   // Disable copy & move
@@ -142,9 +141,11 @@ public:
 
   void waitIdle() const { device_->waitIdle(); };
 
-  template <concurrency::pool::coroutine::policy::Queue QP>
-  concurrency::pool::coroutine::Scheduler<QP> schedule() noexcept {
-    return gpuPool_->schedule<QP>();
+  template <concurrency::pool::coroutine::policy::Queue QP =
+                concurrency::pool::coroutine::policy::Queue::Inline,
+            typename... PushArgs>
+  auto schedule(PushArgs &&...args) noexcept {
+    return gpuPool_->schedule<QP>(std::forward<PushArgs>(args)...);
   }
 
   template <typename F, typename... Args>
@@ -163,9 +164,9 @@ public:
   [[nodiscard]] uint64_t getFrameIndex() const { return frameIndex_; }
 
   template <std::invocable<vk::CommandBuffer> F>
-  [[nodiscard]] concurrency::pool::coroutine::CoroutineTask<
-      concurrency::pool::coroutine::policy::Suspend::Never, void>
+  [[nodiscard]] GPUCoroTask<void>
   submitOneShot(vk::Queue queue, uint32_t queueFamily, F &&recordFn);
+
   CommandBufferHandle acquireCommandBuffer(uint32_t queueFamily);
 
 private:
@@ -192,9 +193,8 @@ CommandBufferHandle Device::acquireCommandBuffer(uint32_t queueFamily) {
 }
 
 template <std::invocable<vk::CommandBuffer> F>
-concurrency::pool::coroutine::CoroutineTask<
-    concurrency::pool::coroutine::policy::Suspend::Never, void>
-Device::submitOneShot(vk::Queue queue, uint32_t queueFamily, F &&recordFn) {
+GPUCoroTask<void> Device::submitOneShot(vk::Queue queue, uint32_t queueFamily,
+                                        F &&recordFn) {
 
   auto cmdHandle = acquireCommandBuffer(queueFamily);
   vk::CommandBuffer cmd = *cmdHandle.buffer;

@@ -8,7 +8,37 @@ import std.compat;
 import vulkan;
 import vk_mem_alloc;
 
+import concurrency;
+
 export namespace graphics::vulkan::devices {
+
+struct FROZENSTARCRYSTAL_GRAPHICS_API GPUTask {
+  concurrency::queues::Task task;
+  uint32_t priority{0};
+};
+
+struct GPUTaskPolicy {
+  using Score = int64_t;
+  static constexpr int64_t promotion_per_second = 100;
+  std::chrono::steady_clock::time_point epoch =
+      std::chrono::steady_clock::now();
+
+  [[nodiscard]] Score score(const GPUTask &e) const noexcept {
+    const auto age = std::chrono::duration_cast<std::chrono::seconds>(
+                         std::chrono::steady_clock::now() - epoch)
+                         .count();
+    return (age * promotion_per_second) - static_cast<int64_t>(e.priority);
+  }
+};
+
+using GPUPoolQueue =
+    concurrency::queues::Priority<GPUTask, std::vector, GPUTaskPolicy,
+                                  concurrency::queues::NoReprioritize>;
+using GPUPool = concurrency::pool::ThreadPool<GPUPoolQueue, GPUTask>;
+template <typename T>
+using GPUCoroTask = concurrency::pool::coroutine::CoroutineTask<
+    GPUPoolQueue, GPUTask, concurrency::pool::coroutine::policy::Suspend::Never,
+    T>;
 
 class Device;
 class Swapchain;

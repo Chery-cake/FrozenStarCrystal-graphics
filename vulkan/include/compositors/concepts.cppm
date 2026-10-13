@@ -35,10 +35,7 @@ template <typename T>
 concept Scene = requires(T &s, const FrameContext frame) {
   { s.beginRecord(frame) } -> std::same_as<void>;
 
-  {
-    s.record(frame)
-  } -> std::same_as<concurrency::pool::coroutine::CoroutineTask<
-      concurrency::pool::coroutine::policy::Suspend::Never, void>>;
+  { s.record(frame) } -> std::same_as<devices::GPUCoroTask<void>>;
 
   { s.endRecord(frame) } -> std::same_as<void>;
 

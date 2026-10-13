@@ -197,11 +197,10 @@ vk::DeviceSize imageDataSize(vk::Format format, vk::Extent3D extent) {
 
 // ===================== intra‑device implementations =====================
 
-concurrency::pool::coroutine::CoroutineTask<
-    concurrency::pool::coroutine::policy::Suspend::Never, void>
-transfer(const std::shared_ptr<Device> &device, const AllocatedBuffer &src,
-         vk::DeviceSize srcOffset, AllocatedBuffer &dst,
-         vk::DeviceSize dstOffset, vk::DeviceSize size) {
+GPUCoroTask<void> transfer(const std::shared_ptr<Device> &device,
+                           const AllocatedBuffer &src, vk::DeviceSize srcOffset,
+                           AllocatedBuffer &dst, vk::DeviceSize dstOffset,
+                           vk::DeviceSize size) {
   uint32_t family = 0;
   auto queue = selectQueue(device, family);
   co_await device
@@ -215,11 +214,10 @@ transfer(const std::shared_ptr<Device> &device, const AllocatedBuffer &src,
   co_return;
 }
 
-concurrency::pool::coroutine::CoroutineTask<
-    concurrency::pool::coroutine::policy::Suspend::Never, void>
-transfer(const std::shared_ptr<Device> &device, const AllocatedBuffer &src,
-         vk::DeviceSize bufferOffset, AllocatedImage &dst,
-         vk::ImageLayout dstFinalLayout) {
+GPUCoroTask<void> transfer(const std::shared_ptr<Device> &device,
+                           const AllocatedBuffer &src,
+                           vk::DeviceSize bufferOffset, AllocatedImage &dst,
+                           vk::ImageLayout dstFinalLayout) {
   uint32_t family = 0;
   auto queue = selectQueue(device, family);
   const auto aspect = aspectFromFormat(dst.format);
@@ -256,10 +254,9 @@ transfer(const std::shared_ptr<Device> &device, const AllocatedBuffer &src,
   co_return;
 }
 
-concurrency::pool::coroutine::CoroutineTask<
-    concurrency::pool::coroutine::policy::Suspend::Never, void>
-transfer(const std::shared_ptr<Device> &device, const AllocatedImage &src,
-         AllocatedBuffer &dst, vk::DeviceSize bufferOffset) {
+GPUCoroTask<void> transfer(const std::shared_ptr<Device> &device,
+                           const AllocatedImage &src, AllocatedBuffer &dst,
+                           vk::DeviceSize bufferOffset) {
   uint32_t family = 0;
   auto queue = selectQueue(device, family);
   const auto aspect = aspectFromFormat(src.format);
@@ -295,10 +292,9 @@ transfer(const std::shared_ptr<Device> &device, const AllocatedImage &src,
   co_return;
 }
 
-concurrency::pool::coroutine::CoroutineTask<
-    concurrency::pool::coroutine::policy::Suspend::Never, void>
-transfer(const std::shared_ptr<Device> &device, const AllocatedImage &src,
-         AllocatedImage &dst, vk::ImageLayout dstFinalLayout) {
+GPUCoroTask<void> transfer(const std::shared_ptr<Device> &device,
+                           const AllocatedImage &src, AllocatedImage &dst,
+                           vk::ImageLayout dstFinalLayout) {
   uint32_t family = 0;
   auto queue = selectQueue(device, family);
   const auto srcAspect = aspectFromFormat(src.format);
@@ -515,11 +511,11 @@ void recordTransfer(vk::CommandBuffer cmd, vk::Image swapchainImage,
 // then a memcpy to a staging buffer on the destination device, and finally
 // a intra‑device copy to the target resource.
 
-concurrency::pool::coroutine::CoroutineTask<
-    concurrency::pool::coroutine::policy::Suspend::Never, void>
-transfer(const std::shared_ptr<Device> &srcDevice, const AllocatedBuffer &src,
-         vk::DeviceSize srcOffset, const std::shared_ptr<Device> &dstDevice,
-         AllocatedBuffer &dst, vk::DeviceSize dstOffset, vk::DeviceSize size) {
+GPUCoroTask<void> transfer(const std::shared_ptr<Device> &srcDevice,
+                           const AllocatedBuffer &src, vk::DeviceSize srcOffset,
+                           const std::shared_ptr<Device> &dstDevice,
+                           AllocatedBuffer &dst, vk::DeviceSize dstOffset,
+                           vk::DeviceSize size) {
   // If we can directly map both buffers (host‑visible), just memcpy.
   // But they might be device‑local, so we stage.
   auto srcStaging = createStagingBuffer(srcDevice, size);
@@ -546,11 +542,11 @@ transfer(const std::shared_ptr<Device> &srcDevice, const AllocatedBuffer &src,
   co_return;
 }
 
-concurrency::pool::coroutine::CoroutineTask<
-    concurrency::pool::coroutine::policy::Suspend::Never, void>
-transfer(const std::shared_ptr<Device> &srcDevice, const AllocatedBuffer &src,
-         vk::DeviceSize srcOffset, const std::shared_ptr<Device> &dstDevice,
-         AllocatedImage &dst, vk::ImageLayout dstFinalLayout) {
+GPUCoroTask<void> transfer(const std::shared_ptr<Device> &srcDevice,
+                           const AllocatedBuffer &src, vk::DeviceSize srcOffset,
+                           const std::shared_ptr<Device> &dstDevice,
+                           AllocatedImage &dst,
+                           vk::ImageLayout dstFinalLayout) {
   // Use a staging buffer on the source device
   vk::DeviceSize imageSize = imageDataSize(dst.format, dst.extent);
   auto staging = createStagingBuffer(srcDevice, imageSize);
@@ -565,11 +561,10 @@ transfer(const std::shared_ptr<Device> &srcDevice, const AllocatedBuffer &src,
   co_return;
 }
 
-concurrency::pool::coroutine::CoroutineTask<
-    concurrency::pool::coroutine::policy::Suspend::Never, void>
-transfer(const std::shared_ptr<Device> &srcDevice, const AllocatedImage &src,
-         const std::shared_ptr<Device> &dstDevice, AllocatedBuffer &dst,
-         vk::DeviceSize dstOffset) {
+GPUCoroTask<void> transfer(const std::shared_ptr<Device> &srcDevice,
+                           const AllocatedImage &src,
+                           const std::shared_ptr<Device> &dstDevice,
+                           AllocatedBuffer &dst, vk::DeviceSize dstOffset) {
   vk::DeviceSize imageSize = imageDataSize(src.format, src.extent);
   auto staging = createStagingBuffer(srcDevice, imageSize);
   // intra src device: image -> staging buffer
@@ -583,11 +578,11 @@ transfer(const std::shared_ptr<Device> &srcDevice, const AllocatedImage &src,
   co_return;
 }
 
-concurrency::pool::coroutine::CoroutineTask<
-    concurrency::pool::coroutine::policy::Suspend::Never, void>
-transfer(const std::shared_ptr<Device> &srcDevice, const AllocatedImage &src,
-         const std::shared_ptr<Device> &dstDevice, AllocatedImage &dst,
-         vk::ImageLayout dstFinalLayout) {
+GPUCoroTask<void> transfer(const std::shared_ptr<Device> &srcDevice,
+                           const AllocatedImage &src,
+                           const std::shared_ptr<Device> &dstDevice,
+                           AllocatedImage &dst,
+                           vk::ImageLayout dstFinalLayout) {
   vk::DeviceSize imageSize = imageDataSize(src.format, src.extent);
   auto staging = createStagingBuffer(srcDevice, imageSize);
   co_await srcDevice

@@ -29,6 +29,8 @@ Registry::load(const Tag *tag,
   // Offload the GPU upload to the first device's thread pool.
   return targetDevices[0]->submit(
       [this, tag, targetDevices, &bindless]() -> std::shared_ptr<Resource> {
+        (void)bindless;
+
         auto resource = std::make_shared<Resource>();
         resource->kind = tag->kind;
 
@@ -63,6 +65,10 @@ Registry::loadCrossDevice(const Tag *tag,
 
   return computeDevice->submit([this, tag, &computeDevice, &displayDevice,
                                 &bindless]() -> std::shared_ptr<Resource> {
+    (void)computeDevice;
+    (void)displayDevice;
+    (void)bindless;
+
     auto resource = std::make_shared<Resource>();
     resource->kind = tag->kind;
 

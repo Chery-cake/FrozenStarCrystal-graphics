@@ -49,8 +49,8 @@ public:
 
   ImageArrayRegistry(const ImageArrayRegistry &) = delete;
   ImageArrayRegistry &operator=(const ImageArrayRegistry &) = delete;
-  ImageArrayRegistry(ImageArrayRegistry &&) noexcept = default;
-  ImageArrayRegistry &operator=(ImageArrayRegistry &&) noexcept = default;
+  ImageArrayRegistry(ImageArrayRegistry &&) noexcept = delete;
+  ImageArrayRegistry &operator=(ImageArrayRegistry &&) noexcept = delete;
 
   // --- Setup (call before init()) ---
 

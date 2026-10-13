@@ -16,30 +16,24 @@ export namespace graphics::vulkan::devices {
 // ---------- intra‑device transfers (same Device&) ----------
 
 // Buffer -> Buffer
-concurrency::pool::coroutine::CoroutineTask<
-    concurrency::pool::coroutine::policy::Suspend::Never, void>
-transfer(const std::shared_ptr<Device> &device, const AllocatedBuffer &src,
-         vk::DeviceSize srcOffset, AllocatedBuffer &dst,
-         vk::DeviceSize dstOffset, vk::DeviceSize size);
+GPUCoroTask<void> transfer(const std::shared_ptr<Device> &device,
+                           const AllocatedBuffer &src, vk::DeviceSize srcOffset,
+                           AllocatedBuffer &dst, vk::DeviceSize dstOffset,
+                           vk::DeviceSize size);
 
 // Buffer -> Image (whole image, one mip level 0, layer 0, whole extent)
-concurrency::pool::coroutine::CoroutineTask<
-    concurrency::pool::coroutine::policy::Suspend::Never, void>
-transfer(
+GPUCoroTask<void> transfer(
     const std::shared_ptr<Device> &device, const AllocatedBuffer &src,
     vk::DeviceSize bufferOffset, AllocatedImage &dst,
     vk::ImageLayout dstFinalLayout = vk::ImageLayout::eShaderReadOnlyOptimal);
 
 // Image -> Buffer (whole image, mip 0, layer 0)
-concurrency::pool::coroutine::CoroutineTask<
-    concurrency::pool::coroutine::policy::Suspend::Never, void>
-transfer(const std::shared_ptr<Device> &device, const AllocatedImage &src,
-         AllocatedBuffer &dst, vk::DeviceSize bufferOffset);
+GPUCoroTask<void> transfer(const std::shared_ptr<Device> &device,
+                           const AllocatedImage &src, AllocatedBuffer &dst,
+                           vk::DeviceSize bufferOffset);
 
 // Image -> Image (whole images, mip 0, layer 0)
-concurrency::pool::coroutine::CoroutineTask<
-    concurrency::pool::coroutine::policy::Suspend::Never, void>
-transfer(
+GPUCoroTask<void> transfer(
     const std::shared_ptr<Device> &device, const AllocatedImage &src,
     AllocatedImage &dst,
     vk::ImageLayout dstFinalLayout = vk::ImageLayout::eShaderReadOnlyOptimal);
@@ -82,16 +76,14 @@ void recordTransfer(
 // ---------- inter‑device transfers (two Device&) ----------
 
 // Buffer -> Buffer (different devices)
-concurrency::pool::coroutine::CoroutineTask<
-    concurrency::pool::coroutine::policy::Suspend::Never, void>
-transfer(const std::shared_ptr<Device> &srcDevice, const AllocatedBuffer &src,
-         vk::DeviceSize srcOffset, const std::shared_ptr<Device> &dstDevice,
-         AllocatedBuffer &dst, vk::DeviceSize dstOffset, vk::DeviceSize size);
+GPUCoroTask<void> transfer(const std::shared_ptr<Device> &srcDevice,
+                           const AllocatedBuffer &src, vk::DeviceSize srcOffset,
+                           const std::shared_ptr<Device> &dstDevice,
+                           AllocatedBuffer &dst, vk::DeviceSize dstOffset,
+                           vk::DeviceSize size);
 
 // Buffer -> Image  (different devices)
-concurrency::pool::coroutine::CoroutineTask<
-    concurrency::pool::coroutine::policy::Suspend::Never, void>
-transfer(
+GPUCoroTask<void> transfer(
     const std::shared_ptr<Device> &srcDevice, const AllocatedBuffer &src,
     vk::DeviceSize srcOffset,
 
@@ -99,16 +91,13 @@ transfer(
     vk::ImageLayout dstFinalLayout = vk::ImageLayout::eShaderReadOnlyOptimal);
 
 // Image -> Buffer  (different devices)
-concurrency::pool::coroutine::CoroutineTask<
-    concurrency::pool::coroutine::policy::Suspend::Never, void>
-transfer(const std::shared_ptr<Device> &srcDevice, const AllocatedImage &src,
-         const std::shared_ptr<Device> &dstDevice, AllocatedBuffer &dst,
-         vk::DeviceSize dstOffset);
+GPUCoroTask<void> transfer(const std::shared_ptr<Device> &srcDevice,
+                           const AllocatedImage &src,
+                           const std::shared_ptr<Device> &dstDevice,
+                           AllocatedBuffer &dst, vk::DeviceSize dstOffset);
 
 // Image -> Image  (different devices)
-concurrency::pool::coroutine::CoroutineTask<
-    concurrency::pool::coroutine::policy::Suspend::Never, void>
-transfer(
+GPUCoroTask<void> transfer(
     const std::shared_ptr<Device> &srcDevice, const AllocatedImage &src,
     const std::shared_ptr<Device> &dstDevice, AllocatedImage &dst,
     vk::ImageLayout dstFinalLayout = vk::ImageLayout::eShaderReadOnlyOptimal);
