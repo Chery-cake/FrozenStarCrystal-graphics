@@ -122,8 +122,11 @@ export {
       vk::SubmitInfo submit{};
       submit.setCommandBuffers(fc.cmd);
       auto queue = device_->getGraphicsQueue();
+      auto family = device_->getInfo().queueFamilies.graphicsQueue.value();
+
       auto result = windowInfo_->swapchain->submitAndPresent(
-          queue, std::span<vk::SubmitInfo>(&submit, 1), fc.imageIndex);
+          {.queue = queue, .family = family},
+          std::span<vk::SubmitInfo>(&submit, 1), fc.imageIndex);
       // ignore result
     }
 

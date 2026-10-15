@@ -46,8 +46,11 @@ submitAndPresent(const std::shared_ptr<devices::WindowInfo> &winInfo,
   vk::SubmitInfo submit{};
   submit.setCommandBuffers(cmd);
   auto queue = dev->getGraphicsQueue();
+  auto family = dev->getInfo().queueFamilies.graphicsQueue.value();
+
   auto res = winInfo->swapchain->submitAndPresent(
-      queue, std::span<vk::SubmitInfo>(&submit, 1), imageIndex);
+      {.queue = queue, .family = family}, std::span<vk::SubmitInfo>(&submit, 1),
+      imageIndex);
   // ignore result
 }
 

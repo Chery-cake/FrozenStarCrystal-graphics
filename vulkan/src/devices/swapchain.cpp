@@ -1,5 +1,6 @@
 module;
 
+#include <cassert>
 #include <cstdint>
 
 module graphics.vulkan.devices;
@@ -179,7 +180,7 @@ Swapchain::Swapchain(
 
 Swapchain::~Swapchain() {
   try {
-    device_->waitIdle();
+    owner_->waitIdle();
   } catch (const vk::Error &e) {
     std::cout << "[Swapchain] Couldn't wait for device\n";
   }
@@ -211,7 +212,7 @@ bool Swapchain::recreateSwapchain(uint32_t newWidth, uint32_t newHeight) {
 
   std::unique_lock lock(mtx_);
 
-  device_->waitIdle();
+  owner_->waitIdle();
   auto windowInfo = windowInfo_.lock();
 
   auto oldSwapchain = std::move(swapchain_);
@@ -351,8 +352,11 @@ std::expected<uint32_t, Swapchain::PresentError> Swapchain::acquireNextImage() {
 }
 
 std::expected<vk::Result, Swapchain::PresentError> Swapchain::submitAndPresent(
-    vk::Queue queue, std::span<vk::SubmitInfo> submitInfos, uint32_t imageIndex,
-    vk::PipelineStageFlags imageWaitStage) {
+    QueueBinding queueBinding, std::span<vk::SubmitInfo> submitInfos,
+    uint32_t imageIndex, vk::PipelineStageFlags imageWaitStage) {
+  assert(queueBinding.family ==
+             owner_->getQueueFamilies().graphicsQueue.value() &&
+         "submitAndPresent expects the device's graphics queue");
 
   std::unique_lock lock(mtx_);
 
@@ -407,8 +411,8 @@ std::expected<vk::Result, Swapchain::PresentError> Swapchain::submitAndPresent(
 
   // Submit everything
   {
-    std::lock_guard lk(owner_->graphicsQueueMtx());
-    queue.submit(infos, inFlightFences_[currentFrame_]);
+    std::lock_guard lc(owner_->familyMutex(queueBinding.family));
+    queueBinding.queue.submit(infos, inFlightFences_[currentFrame_]);
   }
 
   // Present using the renderFinished semaphore
@@ -421,7 +425,7 @@ std::expected<vk::Result, Swapchain::PresentError> Swapchain::submitAndPresent(
 
   vk::Result result;
   try {
-    std::lock_guard lk(owner_->graphicsQueueMtx());
+    std::lock_guard lc(owner_->familyMutex(presentQueueFamily_));
     result = presentQueue_.presentKHR(presentInfo);
   } catch (const vk::OutOfDateKHRError &) {
     needRecreation_.store(true, std::memory_order_release);
@@ -453,8 +457,11 @@ std::expected<vk::Result, Swapchain::PresentError> Swapchain::submitAndPresent(
   return result;
 }
 
-vk::Result Swapchain::submitAndWait(vk::Queue queue,
+vk::Result Swapchain::submitAndWait(QueueBinding queueBinding,
                                     std::span<vk::SubmitInfo> submitInfos) {
+  assert(queueBinding.family ==
+             owner_->getQueueFamilies().graphicsQueue.value() &&
+         "submitAndPresent expects the device's graphics queue");
 
   uint32_t wait;
 
@@ -471,8 +478,8 @@ vk::Result Swapchain::submitAndWait(vk::Queue queue,
     device_->resetFences(*waitFences_[currentWait_]);
 
     {
-      std::lock_guard lc(owner_->graphicsQueueMtx());
-      queue.submit(infos, waitFences_[currentWait_]);
+      std::lock_guard lc(owner_->familyMutex(queueBinding.family));
+      queueBinding.queue.submit(infos, waitFences_[currentWait_]);
     }
 
     wait = currentWait_;

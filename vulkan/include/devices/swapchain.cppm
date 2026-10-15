@@ -65,6 +65,11 @@ public:
     vk::Format format;
   };
 
+  struct QueueBinding {
+    vk::Queue queue;
+    uint32_t family;
+  };
+
 private:
   std::shared_ptr<vk::raii::PhysicalDevice> physicalDevice_;
   std::shared_ptr<vk::raii::Device> device_;
@@ -117,11 +122,11 @@ public:
   [[nodiscard]] std::expected<uint32_t, PresentError> acquireNextImage();
 
   [[nodiscard]] std::expected<vk::Result, PresentError>
-  submitAndPresent(vk::Queue queue, std::span<vk::SubmitInfo> submitInfos,
-                   uint32_t imageIndex,
+  submitAndPresent(QueueBinding queueBinding,
+                   std::span<vk::SubmitInfo> submitInfos, uint32_t imageIndex,
                    vk::PipelineStageFlags imageWaitStage =
                        vk::PipelineStageFlagBits::eColorAttachmentOutput);
-  vk::Result submitAndWait(vk::Queue queue,
+  vk::Result submitAndWait(QueueBinding queueBinding,
                            std::span<vk::SubmitInfo> submitInfos);
 
   [[nodiscard]] bool needRecreation() const {

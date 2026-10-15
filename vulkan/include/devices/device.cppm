@@ -31,11 +31,7 @@ private:
   vk::Queue sparseBidingQueue_;
   vk::Queue protectedQueue_;
 
-  mutable std::mutex graphicsQueueMtx_;
-  mutable std::mutex computeQueueMtx_;
-  mutable std::mutex transferQueueMtx_;
-  mutable std::mutex sparseQueueMtx_;
-  mutable std::mutex protectedQueueMtx_;
+  mutable std::vector<std::mutex> familyMtx_;
 
   std::shared_ptr<GPUPool> gpuPool_;
 
@@ -143,23 +139,35 @@ public:
     return info_.queueFamilies;
   }
 
-  [[nodiscard]] std::mutex &graphicsQueueMtx() const noexcept {
-    return graphicsQueueMtx_;
-  }
-  [[nodiscard]] std::mutex &computeQueueMtx() const noexcept {
-    return computeQueueMtx_;
-  }
-  [[nodiscard]] std::mutex &transferQueueMtx() const noexcept {
-    return transferQueueMtx_;
-  }
-  [[nodiscard]] std::mutex &sparseQueueMtx() const noexcept {
-    return sparseQueueMtx_;
-  }
-  [[nodiscard]] std::mutex &protectedQueueMtx() const noexcept {
-    return protectedQueueMtx_;
+  [[nodiscard]] std::mutex &familyMutex(uint32_t family) const noexcept {
+    return familyMtx_[family];
   }
 
-  void waitIdle() const { device_->waitIdle(); };
+  void waitIdle() const {
+    auto locks = familyMtx_ | std::views::transform([](auto &m) {
+                   std::unique_lock lock(m);
+                   return lock;
+                 }) |
+                 std::ranges::to<std::vector>();
+    // Per-queue waits rather than vkDeviceWaitIdle. Equivalent for the
+    // queues we created, and doesn't trip the validation layer's
+    // device-wide "queue used by another thread" check.
+    if (graphicsQueue_) {
+      graphicsQueue_.waitIdle();
+    }
+    if (computeQueue_) {
+      computeQueue_.waitIdle();
+    }
+    if (transferQueue_) {
+      transferQueue_.waitIdle();
+    }
+    if (sparseBidingQueue_) {
+      sparseBidingQueue_.waitIdle();
+    }
+    if (protectedQueue_) {
+      protectedQueue_.waitIdle();
+    }
+  };
 
   template <concurrency::pool::coroutine::policy::Queue QP =
                 concurrency::pool::coroutine::policy::Queue::Inline,
@@ -227,27 +235,11 @@ GPUCoroTask<void> Device::submitOneShot(vk::Queue queue, uint32_t queueFamily,
   vk::SubmitInfo submit;
   submit.setCommandBuffers(cmd);
 
-  std::mutex *queueMtx = nullptr;
-  if (queueFamily == info_.queueFamilies.graphicsQueue) {
-    queueMtx = &graphicsQueueMtx_;
-  } else if (queueFamily == info_.queueFamilies.computeQueue) {
-    queueMtx = &computeQueueMtx_;
-  } else if (queueFamily == info_.queueFamilies.transferQueue) {
-    queueMtx = &transferQueueMtx_;
-  } else if (queueFamily == info_.queueFamilies.sparseBindingQueue) {
-    queueMtx = &sparseQueueMtx_;
-  } else if (queueFamily == info_.queueFamilies.protectedQueue) {
-    queueMtx = &protectedQueueMtx_;
-  }
-
   vk::raii::Fence fence{*device_, vk::FenceCreateInfo{}};
-  if (queueMtx != nullptr) {
-    std::lock_guard lock(*queueMtx);
-    queue.submit(submit, *fence);
-  } else {
+  {
+    std::lock_guard lock(familyMutex(queueFamily));
     queue.submit(submit, *fence);
   }
-
   co_await FenceAwaiter{.waiter = getFenceWaiter(),
                         .device = shared_from_this(),
                         .fence = std::move(fence),

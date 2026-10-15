@@ -241,6 +241,8 @@ int main() {
 
     // 13. Main loop
     vk::Queue graphicsQueue = device->getGraphicsQueue();
+    auto family = device->getInfo().queueFamilies.graphicsQueue.value();
+
     while (!glfwWindowShouldClose(window)) {
       glfwPollEvents();
 
@@ -265,7 +267,8 @@ int main() {
       vk::SubmitInfo submit{};
       submit.setCommandBuffers(commandBuffers[imageIndex]);
       auto presentResult = windowInfo->swapchain->submitAndPresent(
-          graphicsQueue, std::span<vk::SubmitInfo>(&submit, 1), imageIndex);
+          {.queue = graphicsQueue, .family = family},
+          std::span<vk::SubmitInfo>(&submit, 1), imageIndex);
       if (!presentResult) {
         std::cerr << "Present error: " << presentResult.error().message << '\n';
       }

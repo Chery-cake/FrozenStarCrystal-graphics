@@ -56,8 +56,8 @@ thread_local ThreadPoolCleanup cleanup;
 Device::Device(const vk::raii::Instance &instance,
                vk::PhysicalDevice physicalDevice, const GPUInfo &info,
                const std::shared_ptr<GPUPool> &gpuPool)
-    : info_(info), gpuPool_(gpuPool),
-      aliveToken_(std::make_shared<uint8_t>(0)) {
+    : info_(info), familyMtx_(physicalDevice.getQueueFamilyProperties().size()),
+      gpuPool_(gpuPool), aliveToken_(std::make_shared<uint8_t>(0)) {
 
   physicalDevice_ =
       std::make_shared<vk::raii::PhysicalDevice>(instance, physicalDevice);
