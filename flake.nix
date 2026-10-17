@@ -1,5 +1,5 @@
 {
-  description = "Dev shell with GCC 16, Clang 22, CMake 4.3.3";
+  description = "Dev shell with GCC 16, Clang 22, CMake 4.3.3 (native + mingw-w64 cross)";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
@@ -7,18 +7,13 @@
   };
 
   outputs =
-    {
-      self,
-      nixpkgs,
-      flake-utils,
-      ...
-    }:
+    { self, nixpkgs, flake-utils, ... }:
     flake-utils.lib.eachDefaultSystem (
       system:
       let
         pkgs = import nixpkgs { inherit system; };
 
-        # Override CMake – same version, same source as your devenv
+        # --- CMake override: 4.3.3 from upstream release tarball ---
         cmake = pkgs.cmake.overrideAttrs (old: rec {
           version = "4.3.3";
           src = pkgs.fetchurl {
@@ -26,12 +21,10 @@
             hash = "sha256-y6S7ekTt8od7tvBZkyiWODur5DWzqMO130i0qkHJu4U=";
           };
           patches = [ ];
-          meta = old.meta // {
-            priority = 0;
-          };
+          meta = old.meta // { priority = 0; };
         });
 
-        # Compiler toolchains
+        # --- Native toolchains ---
         gcc = pkgs.gcc16;
         gccUnwrapped = gcc.cc;
 
@@ -42,7 +35,10 @@
 
         glibcDev = pkgs.glibc.dev;
 
-        # Include flags from your devenv
+        # --- Cross toolchain namespace (Windows x86_64) ---
+        mingwPkgs = pkgs.pkgsCross.mingwW64;
+
+        # --- Native include flags ---
         flags =
           with builtins;
           concatStringsSep " " [
@@ -50,27 +46,22 @@
             "-isystem ${gccUnwrapped}/include/c++/${gccUnwrapped.version}/x86_64-unknown-linux-gnu"
             "-isystem ${gccUnwrapped}/include/c++/${gccUnwrapped.version}/backward"
             "-isystem ${glibcDev}/include"
-
-            # XCB / Wayland / xkbcommon headers (needed by Vulkan & GLFW)
             "-isystem ${pkgs.libxcb.dev}/include"
             "-isystem ${pkgs.wayland.dev}/include"
             "-isystem ${pkgs.libxkbcommon.dev}/include"
           ];
 
-
-        # Hardening: disable only "fortify" (keep everything else that nixpkgs enables)
         hardeningDisableFortify = "stackprotector pie pic strictoverflow format relro bindnow";
 
-        # Extra CMake flags for this environment (Clang + LTO)
+        # Extra CMake flags for the native (Clang + LTO + LLD) build
         extraFlags = builtins.concatStringsSep " " [
           "-DCMAKE_CXX_COMPILER_AR=${llvmTools}/bin/llvm-ar"
           "-DCMAKE_CXX_COMPILER_RANLIB=${llvmTools}/bin/llvm-ranlib"
           "-DCMAKE_LINKER_TYPE=LLD"
         ];
-      in
-      {
-        devShells.default = pkgs.mkShell {
-          # Packages available in the shell
+
+        # ---------- Native Linux shell ----------
+        linuxShell = pkgs.mkShell {
           nativeBuildInputs = [
             pkgs.git
             gcc
@@ -122,7 +113,7 @@
 
             LD_LIBRARY_PATH =
               with pkgs;
-              lib.makeLibraryPath ([
+              lib.makeLibraryPath [
                 vulkan-loader
                 libx11
                 libxrandr
@@ -137,7 +128,7 @@
                 wayland
                 wayland-protocols
                 libxkbcommon
-              ])
+              ]
               + ":/run/opengl-driver/lib";
 
             PKG_CONFIG_PATH =
@@ -164,12 +155,9 @@
             CXX_MODULES_JSON = "${gccUnwrapped}/lib/libstdc++.modules.json";
 
             USE_LLVM_LTO = "1";
-
-            # Disable fortify hardening only
             NIX_HARDENING_ENABLE = hardeningDisableFortify;
           };
 
-          # Shell hook: runs after entering the shell (enterShell equivalent)
           shellHook = ''
             export PROJECT_ROOT="$PWD"
             export CC="${clang}/bin/clang"
@@ -178,8 +166,63 @@
             echo "C compiler:   $CC   ($( $CC   --version | head -n1 ))"
             echo "C++ compiler: $CXX ($( $CXX --version | head -n1 ))"
 
-            settings --cmake-extra-flags "${extraFlags}"
+            settings --toolchain "" --cmake-extra-flags "${extraFlags}"
           '';
+        };
+
+        # ---------- Windows cross-compilation shell ----------
+        windowsShell = mingwPkgs.mkShell {
+          # Tools that run on the *build* host (Linux)
+          nativeBuildInputs = [
+            pkgs.git
+            cmake
+            pkgs.ninja
+            pkgs.pkg-config
+            pkgs.python3
+            mingwPkgs.stdenv.cc
+            pkgs.wine64Packages.stable
+          ];
+
+          # Target libraries (linked into the Windows binary)
+          buildInputs = [
+            mingwPkgs.windows.mcfgthreads
+            mingwPkgs.vulkan-headers
+            mingwPkgs.vulkan-loader
+            #mingwPkgs.vulkan-validation-layers
+            mingwPkgs.tbb
+          ];
+
+          shellHook = ''
+            # Host flags from linuxShell must NOT leak into a cross build.
+            unset CXXFLAGS CFLAGS CPPFLAGS LDFLAGS
+            unset NIX_CFLAGS_COMPILE NIX_CXXSTDLIB_COMPILE NIX_LDFLAGS
+            unset CXX_MODULES_JSON
+            export NIX_LDFLAGS="-L${mingwPkgs.windows.mcfgthreads}/lib $NIX_LDFLAGS"
+
+            # Only look at target .pc files (avoid picking up host ones)
+            export PKG_CONFIG_PATH=""
+            export PKG_CONFIG_LIBDIR="${
+              pkgs.lib.makeSearchPath "lib/pkgconfig" [
+                mingwPkgs.vulkan-loader
+              ]
+            }"
+
+            export CC="${mingwPkgs.stdenv.cc}/bin/x86_64-w64-mingw32-gcc"
+            export CXX="${mingwPkgs.stdenv.cc}/bin/x86_64-w64-mingw32-g++"
+
+            export CXX_MODULES_JSON="$($CXX -print-file-name=libstdc++.modules.json)"
+
+            echo "Windows cross-compiler: $CXX"
+            $CXX --version | head -n1
+
+            settings --toolchain windows-x86_64 --cmake-extra-flags "" --sanitizers ""
+          '';
+        };
+      in
+      {
+        devShells = {
+          default = linuxShell;
+          windows = windowsShell;
         };
       }
     );

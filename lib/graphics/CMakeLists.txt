@@ -9,7 +9,6 @@
 # - shader-slang/slang - Runtime shader compilation
 # ==============================================================================
 
-include(FetchContent)
 include(ExternalProject)
 
 # ==============================================================================
@@ -23,15 +22,17 @@ include(ExternalProject)
 #)
 #FetchContent_MakeAvailable(vulkan_headers)
 
-FetchContent_Declare(
-    vulkan_hpp
-    GIT_REPOSITORY https://github.com/KhronosGroup/Vulkan-Hpp.git
+fsc_add_library(
+    NAME _vulkan_hpp
+    GITHUB_REPOSITORY KhronosGroup/Vulkan-Hpp
     GIT_TAG v1.4.352
-    GIT_SHALLOW TRUE
+    TEST_TARGET Vulkan::HppModule
+    CPM_ARGS
+        GIT_SHALLOW TRUE
+        OPTIONS
+            "VULKAN_HPP_DISPATCH_LOADER_DYNAMIC ON"
+            "VULKAN_HPP_ENABLE_SHARED_STORAGE ON"
 )
-set(VULKAN_HPP_DISPATCH_LOADER_DYNAMIC ON CACHE BOOL "Use dynamic loader")
-set(VULKAN_HPP_ENABLE_SHARED_STORAGE ON CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(vulkan_hpp)
 
 # Get the real (non-alias) targets for Vulkan-Hpp
 #get_target_property(_vulkan_headers_real Vulkan::Headers ALIASED_TARGET)
@@ -55,8 +56,8 @@ endif()
 
 add_library(vk vulkan.cpp)
 target_include_directories(vk SYSTEM PUBLIC
-    ${vulkan_hpp_SOURCE_DIR}/Vulkan-Headers/include
-    ${vulkan_hpp_SOURCE_DIR}/vulkan
+    ${_vulkan_hpp_SOURCE_DIR}/Vulkan-Headers/include
+    ${_vulkan_hpp_SOURCE_DIR}/vulkan
 )
 target_link_libraries(vk PUBLIC
     #Vulkan::Headers
@@ -87,15 +88,17 @@ set_target_properties(vk PROPERTIES
 #    GIT_TAG v3.3.0
 #    GIT_SHALLOW TRUE
 #)
-FetchContent_Declare(
-    _vma_hpp
-    GIT_REPOSITORY https://github.com/YaaZ/VulkanMemoryAllocator-Hpp.git
+fsc_add_library(
+    NAME _vma_hpp
+    GITHUB_REPOSITORY YaaZ/VulkanMemoryAllocator-Hpp
     GIT_TAG v3.4.0+1
-    GIT_SHALLOW TRUE
+    TEST_TARGET VulkanMemoryAllocator-Hpp::VulkanMemoryAllocator-HppModule
+    CPM_ARGS
+        GIT_SHALLOW TRUE
+        OPTIONS
+            "VMA_STATIC_VULKAN_FUNCTIONS OFF"
+            "VMA_DYNAMIC_VULKAN_FUNCTIONS ON"
 )
-set(VMA_STATIC_VULKAN_FUNCTIONS OFF CACHE BOOL "" FORCE)
-set(VMA_DYNAMIC_VULKAN_FUNCTIONS ON CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(_vma_hpp)
 
 #get_target_property(_vma_hpp_module_real VulkanMemoryAllocator-Hpp::VulkanMemoryAllocator-HppModule ALIASED_TARGET)
 
@@ -134,12 +137,11 @@ set_target_properties(vma PROPERTIES
 # automatically without any hardcoded paths in C++ code.
 # ==============================================================================
 if(APPLE)
-    FetchContent_Declare(
-        _moltenvk
+    CPMAddPackage(
+        NAME _moltenvk
         URL https://github.com/KhronosGroup/MoltenVK/releases/download/v1.4.1/MoltenVK-macos.tar
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     )
-    FetchContent_MakeAvailable(_moltenvk)
 
     set(MOLTENVK_DYLIB
         "${_moltenvk_SOURCE_DIR}/MoltenVK/dynamic/dylib/macOS/libMoltenVK.dylib"
@@ -178,187 +180,91 @@ endif()
 # ==============================================================================
 # shader-slang/slang - Runtime shader compiler - manual external project
 # ==============================================================================
-# Slang requires a two‑step build:
-#   1. Build the host generator tools (slang-embed, etc.)
-#   2. Build the library using SLANG_GENERATORS_PATH
+# Slang is built via ExternalProject_Add because it has a two-stage build
+# (host generators first, then the library). That install step produces a
+# portable include/+lib/ tree, which means a completed build in ANY sibling
+# FSC checkout can be reused verbatim — no source fetch, no recompile.
+#
+# Resolution order:
+#   1. Any registered sibling with build/_deps/slang/include/slang.h
+#   2. This project's own build/_deps/slang (from a previous build)
+#   3. Build it locally (populates build/_deps/slang for future projects)
 # ==============================================================================
 
-# ---------------------------------------------------------------------------
-# Fetch the source once (do not update automatically)
-# ---------------------------------------------------------------------------
-FetchContent_Declare(
-    slang_source
-    GIT_REPOSITORY   https://github.com/shader-slang/slang.git
-    GIT_TAG          v2025.24.3
-    GIT_SHALLOW      TRUE
-    GIT_SUBMODULES_RECURSE FALSE   # needed by some internal libs
-    GIT_PROGRESS     TRUE
-    UPDATE_DISCONNECTED 1         # TODO update to a newer or better declaration
+# --- Prerequisite: slang generator tools (shareable install) -----------------
+# These are host-only tools (slang-embed, ...). Their install prefix lives in
+# build/_deps/slang-generators and is reused from any sibling FSC checkout.
+fsc_external_install(
+    NAME slang_generators
+    GITHUB_REPOSITORY shader-slang/slang
+    GIT_TAG v2025.24.3
+    INSTALL_SUBDIR slang-generators
+    INSTALL_HEADER bin/slang-embed${CMAKE_EXECUTABLE_SUFFIX}
+    CPM_ARGS
+        GIT_SHALLOW TRUE
+        GIT_SUBMODULES_RECURSE FALSE
+    EXTERNAL_PROJECT_ARGS
+        CMAKE_ARGS
+            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
+            -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+            -DSLANG_SLANG_LLVM_FLAVOR=DISABLE
+            -DSLANG_ENABLE_SLANG_RHI=OFF
+            -DSLANG_ENABLE_TESTS=OFF
+            -DSLANG_ENABLE_EXAMPLES=OFF
+            -DSLANG_ENABLE_GFX=OFF
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+        BUILD_COMMAND
+            ${CMAKE_COMMAND} --build <BINARY_DIR>
+                --target all-generators --config Release
+        INSTALL_COMMAND
+            ${CMAKE_COMMAND} --install <BINARY_DIR>
+                --prefix <INSTALL_DIR>
+                --component generators --config Release
+        BUILD_BYPRODUCTS
+            "${CMAKE_BINARY_DIR}/_deps/slang-generators/bin/slang-embed${CMAKE_EXECUTABLE_SUFFIX}"
 )
 
-FetchContent_GetProperties(slang_source)
-if(NOT slang_source_POPULATED)
-    cmake_policy(PUSH)
-    cmake_policy(SET CMP0169 OLD)
-    FetchContent_Populate(slang_source)   # sets slang_source_SOURCE_DIR
-    cmake_policy(POP)
+# --- Main slang library: reuse a sibling's install or build locally ----------
+# Pass EXTERNAL_PROJECT_DEPENDS only when the generators actually built here;
+# when reused from a sibling, FSC_slang_generators_TARGET is empty and the dep
+# is unnecessary.
+set(_slang_generators_dep_args "")
+if(FSC_slang_generators_TARGET)
+    list(APPEND _slang_generators_dep_args
+        EXTERNAL_PROJECT_DEPENDS "${FSC_slang_generators_TARGET}")
 endif()
 
-set(SLANG_SOURCE_DIR ${slang_source_SOURCE_DIR})
-
-set(SLANG_INSTALL_DIR "${CMAKE_BINARY_DIR}/_deps/slang")
-set(SLANG_GENERATORS_INSTALL_DIR "${CMAKE_BINARY_DIR}/_deps/slang-generators")
-if(WIN32 AND MSVC)
-    set(_SLANG_BYPRODUCTS
-        "${SLANG_INSTALL_DIR}/lib/slang.lib"
-        "${SLANG_INSTALL_DIR}/bin/slang.dll"
-    )
-elseif(WIN32)
-    # MinGW cross-compilation: import libraries use .dll.a suffix
-    set(_SLANG_BYPRODUCTS
-        "${SLANG_INSTALL_DIR}/lib/libslang.dll.a"
-        "${SLANG_INSTALL_DIR}/bin/slang.dll"
-    )
-else()
-    set(_SLANG_BYPRODUCTS
-        "${SLANG_INSTALL_DIR}/lib/libslang${CMAKE_SHARED_LIBRARY_SUFFIX}"
-    )
-endif()
-
-# TODO add toolchain for cross compiling
-
-string(REGEX REPLACE "-fsanitize=[^ ]*" "" _SLANG_C_FLAGS   "${CMAKE_C_FLAGS}")
-string(REGEX REPLACE "-fsanitize=[^ ]*" "" _SLANG_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
-string(REGEX REPLACE "-fsanitize=[^ ]*" "" _SLANG_EXE_LINKER_FLAGS   "${CMAKE_EXE_LINKER_FLAGS}")
-string(REGEX REPLACE "-fsanitize=[^ ]*" "" _SLANG_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS}")
-string(REGEX REPLACE "-fsanitize=[^ ]*" "" _SLANG_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS}")
-string(REGEX REPLACE "-g -fno-omit-frame-pointer" "" _SLANG_C_FLAGS   "${_SLANG_C_FLAGS}")
-string(REGEX REPLACE "-g -fno-omit-frame-pointer" "" _SLANG_CXX_FLAGS "${_SLANG_CXX_FLAGS}")
-string(REGEX REPLACE "-g -fno-omit-frame-pointer" "" _SLANG_EXE_LINKER_FLAGS   "${_SLANG_EXE_LINKER_FLAGS}")
-string(REGEX REPLACE "-g -fno-omit-frame-pointer" "" _SLANG_SHARED_LINKER_FLAGS "${_SLANG_SHARED_LINKER_FLAGS}")
-string(REGEX REPLACE "-g -fno-omit-frame-pointer" "" _SLANG_MODULE_LINKER_FLAGS   "${_SLANG_MODULE_LINKER_FLAGS}")
-
-# Step 1: Build slang generator tools for the host platform
-ExternalProject_Add(
-    _slang_generators
-    SOURCE_DIR   ${SLANG_SOURCE_DIR}
-    BINARY_DIR   ${CMAKE_BINARY_DIR}/_deps/slang-generators-build
-    INSTALL_DIR  ${SLANG_GENERATORS_INSTALL_DIR}
-
-    CMAKE_ARGS
-        -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}
-        -DCMAKE_BUILD_TYPE=Release
-        -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
-        -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
-        -DCMAKE_C_FLAGS=${_SLANG_C_FLAGS}
-        -DCMAKE_CXX_FLAGS=${_SLANG_CXX_FLAGS}
-        -DCMAKE_EXE_LINKER_FLAGS=${_SLANG_EXE_LINKER_FLAGS}
-        -DCMAKE_SHARED_LINKER_FLAGS=${_SLANG_SHARED_LINKER_FLAGS}
-        -DCMAKE_MODULE_LINKER_FLAGS=${_SLANG_MODULE_LINKER_FLAGS}
-        -DSLANG_SLANG_LLVM_FLAVOR=DISABLE
-        -DSLANG_ENABLE_SLANG_RHI=OFF
-        -DSLANG_ENABLE_TESTS=OFF
-        -DSLANG_ENABLE_EXAMPLES=OFF
-        -DSLANG_ENABLE_GFX=OFF
-        -DCMAKE_POSITION_INDEPENDENT_CODE=ON
-
-    BUILD_COMMAND
-        ${CMAKE_COMMAND} --build <BINARY_DIR>
-            --target all-generators
-            --config "Release"
-
-    INSTALL_COMMAND
-        ${CMAKE_COMMAND} --install <BINARY_DIR>
-            --prefix ${SLANG_GENERATORS_INSTALL_DIR}
-            --component generators
-            --config "Release"
-
-    BUILD_BYPRODUCTS
-        "${SLANG_GENERATORS_INSTALL_DIR}/bin/slang-embed${CMAKE_EXECUTABLE_SUFFIX}"
-        # Add other generated executables if needed for dependency tracking:
-        # "${SLANG_GENERATORS_INSTALL_DIR}/bin/slang-capability-generator${CMAKE_EXECUTABLE_SUFFIX}"
+fsc_add_library(
+    NAME slang
+    GITHUB_REPOSITORY shader-slang/slang
+    GIT_TAG v2025.24.3
+    INSTALL_SUBDIR slang
+    INSTALL_HEADER include/slang.h
+    CPM_ARGS
+        GIT_SHALLOW TRUE
+        GIT_SUBMODULES_RECURSE FALSE
+    ${_slang_generators_dep_args}
+    EXTERNAL_PROJECT_ARGS
+        CMAKE_ARGS
+            -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}
+            -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+            -DCMAKE_SYSTEM_NAME=${CMAKE_SYSTEM_NAME}
+            -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
+            -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+            -DSLANG_GENERATORS_PATH=${FSC_slang_generators_INSTALL_DIR}/bin
+            -DSLANG_ENABLE_TESTS=OFF
+            -DSLANG_ENABLE_EXAMPLES=OFF
+            -DSLANG_ENABLE_GFX=OFF
+            -DSLANG_ENABLE_SLANGD=OFF
+            -DSLANG_ENABLE_SLANGC=ON
+            -DSLANG_ENABLE_SLANGI=OFF
+            -DSLANG_ENABLE_SLANGRT=ON
+            -DSLANG_EXCLUDE_DAWN=ON
+            -DSLANG_EXCLUDE_TINT=ON
+            -DSLANG_SLANG_LLVM_FLAVOR=DISABLE
+            -DSLANG_ENABLE_SLANG_RHI=OFF
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON
 )
-
-# Step 2: Build the actual slang library using the pre-built generators
-ExternalProject_Add(
-    _slang
-    SOURCE_DIR   ${SLANG_SOURCE_DIR}
-    BINARY_DIR   ${CMAKE_BINARY_DIR}/_deps/slang-build
-    INSTALL_DIR  ${SLANG_INSTALL_DIR}
-    DEPENDS      _slang_generators
-
-    BUILD_BYPRODUCTS ${_SLANG_BYPRODUCTS}
-
-    CMAKE_ARGS
-        -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}
-        -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
-        -DCMAKE_SYSTEM_NAME=${CMAKE_SYSTEM_NAME}
-        -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
-        -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
-        -DCMAKE_C_FLAGS=${_SLANG_C_FLAGS}
-        -DCMAKE_CXX_FLAGS=${_SLANG_CXX_FLAGS}
-        -DCMAKE_EXE_LINKER_FLAGS=${_SLANG_EXE_LINKER_FLAGS}
-        -DCMAKE_SHARED_LINKER_FLAGS=${_SLANG_SHARED_LINKER_FLAGS}
-        -DCMAKE_MODULE_LINKER_FLAGS=${_SLANG_MODULE_LINKER_FLAGS}
-        -DCMAKE_INSTALL_PREFIX=${SLANG_INSTALL_DIR}
-        -DSLANG_GENERATORS_PATH=${SLANG_GENERATORS_INSTALL_DIR}/bin
-        -DSLANG_ENABLE_TESTS=OFF
-        -DSLANG_ENABLE_EXAMPLES=OFF
-        -DSLANG_ENABLE_GFX=OFF
-        -DSLANG_ENABLE_SLANGD=OFF
-        -DSLANG_ENABLE_SLANGC=ON
-        -DSLANG_ENABLE_SLANGI=OFF
-        -DSLANG_ENABLE_SLANGRT=ON
-        -DSLANG_EXCLUDE_DAWN=ON
-        -DSLANG_EXCLUDE_TINT=ON
-        -DSLANG_SLANG_LLVM_FLAVOR=DISABLE
-        -DSLANG_ENABLE_SLANG_RHI=OFF
-        -DCMAKE_POSITION_INDEPENDENT_CODE=ON
-)
-
-add_library(slang INTERFACE)
-add_dependencies(slang _slang)
-#target_link_libraries(slang INTERFACE _slang)
-target_include_directories(slang INTERFACE
-    "${SLANG_INSTALL_DIR}/include"
-)
-# Link the actual library
-if(WIN32 AND MSVC)
-    target_link_libraries(slang INTERFACE
-        "${SLANG_INSTALL_DIR}/lib/slang.lib"
-    )
-elseif(WIN32)
-    # MinGW: use the .dll.a import library
-    target_link_libraries(slang INTERFACE
-        "${SLANG_INSTALL_DIR}/lib/libslang.dll.a"
-    )
-else()
-    target_link_libraries(slang INTERFACE
-        "${SLANG_INSTALL_DIR}/lib/libslang${CMAKE_SHARED_LIBRARY_SUFFIX}"
-    )
-endif()
-
-
-# Copy slang shared libraries to the output directory so that test executables
-# (and the main binary) can find transitive dependencies like
-# libslang-compiler at runtime.  Uses cmake -E copy_directory which is
-# cross-platform and avoids shell-escaping issues with ninja.
-if(WIN32)
-    add_custom_target(copy_slang_libs ALL
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${SLANG_INSTALL_DIR}/bin"
-            "${OUTPUT_DIR}"
-        COMMENT "[Slang] Copying DLLs to ${OUTPUT_DIR}"
-    )
-else()
-    add_custom_target(copy_slang_libs ALL
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${SLANG_INSTALL_DIR}/bin"
-            "${OUTPUT_DIR}/lib/"
-        COMMENT "[Slang] Copying shared libraries to ${OUTPUT_DIR}/lib"
-    )
-endif()
-add_dependencies(copy_slang_libs _slang)
-add_dependencies(slang copy_slang_libs)
 
 message(STATUS "Graphics dependencies configured")

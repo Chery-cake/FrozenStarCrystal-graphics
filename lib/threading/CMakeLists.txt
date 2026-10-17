@@ -2,12 +2,26 @@
 # Threading Dependencies
 # ==============================================================================
 
-include(FetchContent)
+find_package(TBB QUIET)   # NOT REQUIRED
 
-find_package(TBB REQUIRED)
+if(TBB_FOUND)
+    message(STATUS "Using system TBB at ${TBB_DIR}")
+else()
+    CPMAddPackage(
+        NAME TBB
+        GITHUB_REPOSITORY uxlfoundation/onetbb
+        GIT_TAG v2023.2.0-rc1
+        GIT_SHALLOW TRUE
+        OPTIONS
+            "TBB_TEST OFF"
+            "TBB_EXAMPLES OFF"
+    )
+endif()
 
 # Create an interface library to abstract the actual TBB target name
 add_library(tbb_engine INTERFACE)
+
+
 
 if(TARGET TBB::tbb)
     target_link_libraries(tbb_engine INTERFACE TBB::tbb)

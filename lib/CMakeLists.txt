@@ -1,31 +1,35 @@
 # ==============================================================================
 # Dependencies - Main Configuration
 # ==============================================================================
-# Manages all external dependencies using FetchContent where feasible.
-# Organized by subsystem: graphics, audio, physics, math, threading, ecs, etc.
+# All third-party deps flow through CPM (loaded by fsc_initialize_project).
 # ==============================================================================
 
-include(FetchContent)
+CPMUsePackageLock("${CMAKE_CURRENT_SOURCE_DIR}/cmake/package-lock.cmake")
 
-# Set FetchContent options
-set(FETCHCONTENT_QUIET OFF)
-#set(FETCHCONTENT_UPDATES_DISCONNECTED ON)
-
-FetchContent_Declare(
-  frozenStarCrystal-core
-  GIT_REPOSITORY https://github.com/Chery-cake/FrozenStarCrystal-core.git
-  GIT_TAG master
-  #GIT_SHALLOW TRUE
-  GIT_PROGRESS TRUE
+# --- FSC core ----------------------------------------------------------------
+# Prefers a local checkout registered via cmake/local-paths.cmake.
+# Falls back to a fresh CPM download into build/_deps/.
+fsc_cpm_or_local(FrozenStarCrystal-core
+    GITHUB_REPOSITORY Chery-cake/FrozenStarCrystal-core
+    GIT_TAG master
+    DOWNLOAD_AND_ADD_SUBDIRECTORY
+    OPTIONS
+        "ENABLE_TESTS OFF"
+        "FSC_TESTS OFF"
 )
-FetchContent_MakeAvailable(frozenStarCrystal-core)
+
+if(NOT TARGET FrozenStarCrystal-core)
+    message(FATAL_ERROR
+        "FrozenStarCrystal-core's CMakeLists.txt did not create a target "
+        "named 'FrozenStarCrystal-core'. Most commonly this means "
+        "fsc_initialize_project() aborted early — check for a stray "
+        "return() inside a macro() in FSCProject.cmake.")
+endif()
 
 # ==============================================================================
-# Include Subdirectory Configurations
+# Subsystem dependencies
 # ==============================================================================
 add_subdirectory(graphics)
-#add_subdirectory(math)
 add_subdirectory(threading)
-#add_subdirectory(utility)
 
 message(STATUS "Dependencies configured successfully")

@@ -103,6 +103,12 @@ CMakeUserPresets.json
 build/
 .cache
 
+/build/
+/build-*/
+/toolchains/
+*/CPM.cmake
+*/CPM.version
+
 # Direnv
 .direnv
 
