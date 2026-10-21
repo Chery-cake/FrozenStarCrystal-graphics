@@ -6,6 +6,7 @@ export module graphics.vulkan.shaders:structs;
 
 import std.compat;
 import vulkan;
+import files;
 
 export namespace graphics::vulkan::shaders {
 
@@ -35,27 +36,18 @@ template <> struct hash<graphics::vulkan::shaders::Shader> {
   static constexpr size_t mix_right = 2;
 
   static std::size_t computeFileHash(const std::string &path) {
-    try {
-      // Get modification time and file size
-      std::filesystem::file_time_type ftime =
-          std::filesystem::last_write_time(path);
-      auto fileSize = std::filesystem::file_size(path);
-
-      // Convert to numeric representations
-      auto timeCount = ftime.time_since_epoch().count();
-      auto sizeVal = static_cast<std::size_t>(fileSize);
-
-      // Combine path, modification time, and size
-      std::size_t hash = std::hash<std::string>{}(path);
-      hash ^= std::hash<decltype(timeCount)>{}(timeCount) + golden_ratio +
-              (hash << mix_left) + (hash >> mix_right);
-      hash ^= sizeVal + golden_ratio + (hash << mix_left) + (hash >> mix_right);
-
-      return hash;
-    } catch (...) {
-      // Fallback if file doesn't exist or permissions fail
+    auto stamp = files::file_stamp::read(files::path{path});
+    if (!stamp) {
       return std::hash<std::string>{}(path);
     }
+
+    auto timeCount = stamp->mtime.time_since_epoch().count();
+    auto sizeVal = static_cast<std::size_t>(stamp->size);
+
+    std::size_t hash = std::hash<std::string>{}(path);
+    hash ^= std::hash<decltype(timeCount)>{}(timeCount) + golden_ratio +
+            (hash << mix_left) + (hash >> mix_right);
+    return hash;
   }
 
   std::size_t
@@ -95,6 +87,8 @@ struct FROZENSTARCRYSTAL_GRAPHICS_API ShaderError {
   std::string message;
 };
 
+// TODO
+// use the files reloadable_file for reloading/recompiling the shaders
 struct FROZENSTARCRYSTAL_GRAPHICS_API ShaderModule {
   std::vector<EntryPoint> entryPoints;
   std::string sourcePath;
@@ -110,56 +104,39 @@ struct FROZENSTARCRYSTAL_GRAPHICS_API ShaderModule {
   std::expected<std::shared_ptr<vk::raii::ShaderModule>, ShaderError>
   createModule(vk::raii::Device &device) const {
 
-    std::error_code ec;
+    auto binResult = files::load(compiledPath);
+    if (!binResult) {
+      return std::unexpected<ShaderError>(
+          {.code = ShaderError::Code::fileNotFound,
+           .message = std::string("Failed to read compiled shader: ") +
+                      binResult.error().what() + '\n'
 
-    // 1. Check file existence
-    if (!std::filesystem::exists(compiledPath, ec)) {
-      return std::unexpected<ShaderError>({.code = ShaderError::Code::fileNotFound,
-                      .message = "Compiled shader not found: " + compiledPath});
+          });
     }
 
-    // 2. Get size (replaces tellg/seekg)
-    auto fileSize = std::filesystem::file_size(compiledPath, ec);
-    if (ec) {
-      return std::unexpected<ShaderError>({.code = ShaderError::Code::fileNotFound,
-                      .message = "Failed to query size of: " + compiledPath});
+    const auto &binary = *binResult;
+
+    if (binary.empty()) {
+      return std::unexpected<ShaderError>(
+          {.code = ShaderError::Code::wrongSizeMultiplier,
+           .message = "Compiled shader size not a multiple of 4 bytes"
+
+          });
     }
 
-    // 3. Validate size constraints
-    if (fileSize % sizeof(uint32_t) != 0) {
-      return std::unexpected<ShaderError>({
-          .code = ShaderError::Code::wrongSizeMultiplier,
-          .message = "Compiled shader size not a multiple of 4 bytes"});
-    }
-    if (fileSize == 0) {
-      return std::unexpected<ShaderError>({.code = ShaderError::Code::noFileSize,
-                      .message = "Compiled shader is empty"});
-    }
-
-    // 4. Read the binary data
-    std::string binary;
-    binary.resize(static_cast<std::size_t>(fileSize));
-    std::ifstream file(compiledPath, std::ios::binary);
-    if (!file.read(binary.data(), static_cast<std::streamsize>(fileSize))) {
-      return std::unexpected<ShaderError>({
-          .code = ShaderError::Code::fileNotFound,
-          .message = "Failed to read compiled shader: " + compiledPath});
-    }
-    file.close();
-
-    const auto *code = reinterpret_cast<const uint32_t *>(binary.data());
     vk::ShaderModuleCreateInfo info{};
-    info.codeSize = fileSize;
-    info.pCode = code;
+    info.codeSize = binary.size();
+    info.pCode = reinterpret_cast<const uint32_t *>(binary.data());
 
     try {
-      auto module = std::make_shared<vk::raii::ShaderModule>(device, info);
-      return module;
+      return std::make_shared<vk::raii::ShaderModule>(device, info);
     } catch (const std::exception &e) {
       return std::unexpected<ShaderError>(
           {.code = ShaderError::Code::creationFailed,
-           .message = std::string("vk::ShaderModule creation failed: ") +
-                      e.what() + '\n'});
+           .message = std::string("vk::ShaderModule creation failes: ") +
+                      e.what() + '\n'
+
+          });
     }
   }
 

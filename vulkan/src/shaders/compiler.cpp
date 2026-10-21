@@ -5,6 +5,8 @@ module;
 
 module graphics.vulkan.shaders;
 
+import files;
+
 namespace graphics::vulkan::shaders {
 
 namespace {
@@ -29,15 +31,32 @@ SlangStage vkStageBitToSlangStage(vk::ShaderStageFlagBits stage) {
 }
 
 std::filesystem::path getExecutableDir() {
-#if defined(__linux__) || defined(__APPLE__)
-  return std::filesystem::canonical("/proc/self/exe").parent_path();
-#elif defined(_WIN32)
-  wchar_t path[MAX_PATH] = {};
-  GetModuleFileNameW(nullptr, path, MAX_PATH);
-  return std::filesystem::path(path).parent_path();
-#else
-  static_assert(false, "Unsupported platform");
-#endif
+  auto dir = files::default_dir<files::Location::Executable>();
+  if (!dir) {
+    throw std::runtime_error("cannot resolve executable directory");
+  }
+  return *dir;
+}
+
+struct shader_paths {
+  files::path source;
+  files::path compiled;
+};
+
+[[nodiscard]] std::optional<shader_paths>
+resolve_shader_paths(const Shader &shader,
+                     std::span<const files::path> includePaths) {
+  auto src =
+      files::find<files::Location::Executable>(shader.sourcePath, includePaths);
+  if (!src) {
+    return std::nullopt;
+  }
+
+  files::path compiled = src->parent_path() / "compiled" / src->filename();
+  compiled.replace_extension(".spv");
+
+  return shader_paths{.source = std::move(*src),
+                      .compiled = std::move(compiled)};
 }
 
 } // namespace
@@ -46,7 +65,7 @@ Compiler::Compiler() {
 
   globalSession();
 
-  auto folder = std::filesystem::path(getExecutableDir() / "assets/shaders");
+  auto folder = getExecutableDir() / "assets" / "shaders";
 
   std::error_code ec;
   std::filesystem::create_directories(folder, ec);
@@ -72,14 +91,23 @@ Compiler::compile(const Shader &shader) {
 
   std::unique_lock lock(mtx_);
 
+  auto paths = resolve_shader_paths(shader, includePaths_);
+  if (!paths) {
+    return std::unexpected<CompilerError>(
+        {.code = CompilerError::Code::fileNotFound,
+         .message =
+             "Shader file doesn't exist on path: " + shader.sourcePath + '\n'});
+  }
+
   try {
 
     Slang::ComPtr<slang::ISession> session;
 
-    auto paths = includePaths_ |
-                 std::views::transform(
-                     [](const std::filesystem::path &p) { return p.c_str(); }) |
-                 std::ranges::to<std::vector<const char *>>();
+    auto searchPaths =
+        includePaths_ |
+        std::views::transform(
+            [](const std::filesystem::path &p) { return p.c_str(); }) |
+        std::ranges::to<std::vector<const char *>>();
 
     slang::TargetDesc targetDesc;
     targetDesc.format = SLANG_SPIRV;
@@ -89,8 +117,8 @@ Compiler::compile(const Shader &shader) {
     slang::SessionDesc sessionDesc;
     sessionDesc.targets = &targetDesc;
     sessionDesc.targetCount = 1;
-    sessionDesc.searchPaths = paths.data();
-    sessionDesc.searchPathCount = static_cast<SlangInt>(paths.size());
+    sessionDesc.searchPaths = searchPaths.data();
+    sessionDesc.searchPathCount = static_cast<SlangInt>(searchPaths.size());
     sessionDesc.defaultMatrixLayoutMode = SLANG_MATRIX_LAYOUT_COLUMN_MAJOR;
 
     globalSession()->createSession(sessionDesc, session.writeRef());
@@ -101,25 +129,8 @@ Compiler::compile(const Shader &shader) {
            .message = "Slang session wasn't able to be created \n"});
     }
 
-    std::filesystem::path file = shader.sourcePath;
-    if (!std::filesystem::exists(shader.sourcePath)) {
-
-      auto it = std::ranges::find_if(includePaths_, [&file](const auto &p) {
-        return std::filesystem::exists(p / file);
-      });
-
-      if (it != includePaths_.end()) {
-        file = *it / file;
-
-      } else {
-
-        return std::unexpected<CompilerError>(
-            {.code = CompilerError::Code::fileNotFound,
-             .message = "Shader file doesn't exist on path: " +
-                        shader.sourcePath + '\n'});
-      }
-    }
-    std::string pathNormalized = file.lexically_normal();
+    std::filesystem::path file = paths->source;
+    std::string pathNormalized = file.string();
 
     Slang::ComPtr<slang::IBlob> diagnosticsBlob;
     slang::IModule *module =
@@ -233,33 +244,28 @@ Compiler::compile(const Shader &shader) {
            .message = "Invalid SPIR-V code size \n"});
     }
 
-    std::filesystem::path outDir = file.parent_path() / "compiled";
-
-    std::error_code ec;
-    std::filesystem::create_directories(outDir, ec);
-    if (ec) {
-      return std::unexpected<CompilerError>(
-          {.code = CompilerError::Code::fileNotFound,
-           .message = "Could not create output directory: " + outDir.string()});
-    }
-
     // Output file: same stem, .spv extension
-    std::filesystem::path outPath =
-        outDir / std::filesystem::path(shader.sourcePath).filename();
-    outPath.replace_extension(".spv");
-
-    std::ofstream outFile(outPath, std::ios::binary);
-    if (!outFile) {
+    auto mkdir = files::ensure_dir(paths->compiled.parent_path());
+    if (!mkdir) {
       return std::unexpected<CompilerError>(
           {.code = CompilerError::Code::fileNotFound,
-           .message = "Could not open output file: " + outPath.string()});
+           .message = "Could not create output directory: " +
+                      paths->compiled.parent_path().string()});
     }
 
-    outFile.write(static_cast<const char *>(codeBlob->getBufferPointer()),
-                  static_cast<std::streamsize>(codeSize));
-    outFile.close();
+    auto saved = files::save_atomic(
+        paths->compiled,
+        std::span<const std::byte>(
+            static_cast<const std::byte *>(codeBlob->getBufferPointer()),
+            codeSize));
+    if (!saved) {
+      return std::unexpected<CompilerError>(
+          {.code = CompilerError::Code::fileNotFound,
+           .message = std::string("Could not write output file: ") +
+                      saved.error().what() + '\n'});
+    }
 
-    return outPath.string();
+    return paths->compiled.string();
   } catch (const std::exception &e) {
     return std::unexpected<CompilerError>(
         {.code = CompilerError::Code::unexpectedError,
@@ -273,79 +279,44 @@ Compiler::compile(const Shader &shader) {
 
 std::string Compiler::getBinary(const Shader &shader, bool forceRecompile) {
 
-  // Resolve the source file against includePaths_, the same way compile()
-  // does.
-  std::filesystem::path sourceFile = shader.sourcePath;
-  {
-    std::unique_lock lock(mtx_);
-    if (!std::filesystem::exists(sourceFile)) {
-      auto it =
-          std::ranges::find_if(includePaths_, [&sourceFile](const auto &p) {
-            return std::filesystem::exists(p / sourceFile);
-          });
-      if (it != includePaths_.end()) {
-        sourceFile = *it / sourceFile;
-      }
-    }
-    sourceFile = sourceFile.lexically_normal();
+  std::unique_lock lock(mtx_);
+
+  auto paths = resolve_shader_paths(shader, includePaths_);
+  if (!paths) {
+    throw std::runtime_error("source not found: " + shader.sourcePath + '\n');
   }
 
-  std::filesystem::path compDir = sourceFile.parent_path() / "compiled";
-  std::filesystem::path file =
-      compDir / std::filesystem::path(shader.sourcePath).filename();
-  file.replace_extension(".spv");
-
-  {
-    std::unique_lock lock(mtx_);
-
-    if (forceRecompile) {
-      std::filesystem::remove(file);
-    }
-
-    if (std::filesystem::exists(file)) {
-      return file.string();
-    }
+  if (forceRecompile) {
+    std::filesystem::remove(paths->compiled);
+  }
+  auto e = files::exists(paths->compiled);
+  if (!e) {
+    throw std::runtime_error("error finding the file " +
+                             paths->compiled.string() +
+                             " with: " + e.error().what() + '\n');
+  }
+  if (*e) {
+    return paths->compiled.string();
   }
 
   auto comp = compile(shader);
-
-  if (!comp) { // TODO deal with errors
+  if (!comp) {
     throw std::runtime_error(comp.error().message);
   }
   return *comp;
 }
 
 bool Compiler::askRecompile(const Shader &shader) {
-  // Resolve source path the same way compile() does.
-  std::filesystem::path sourceFile = shader.sourcePath;
-  {
-    std::unique_lock lock(mtx_);
-    if (!std::filesystem::exists(sourceFile)) {
-      auto it =
-          std::ranges::find_if(includePaths_, [&sourceFile](const auto &p) {
-            return std::filesystem::exists(p / sourceFile);
-          });
-      if (it != includePaths_.end()) {
-        sourceFile = *it / sourceFile;
-      }
-    }
-    sourceFile = sourceFile.lexically_normal();
+
+  std::unique_lock lock(mtx_);
+
+  auto paths = resolve_shader_paths(shader, includePaths_);
+  if (!paths) {
+    return false;
   }
 
-  std::filesystem::path compDir = sourceFile.parent_path() / "compiled";
-  std::filesystem::path file =
-      compDir / std::filesystem::path(shader.sourcePath).filename();
-  file.replace_extension(".spv");
-
-  std::filesystem::remove(file);
-
-  {
-    std::unique_lock lock(mtx_);
-    std::filesystem::remove(file);
-  }
-
-  auto comp = compile(shader);
-  return comp.has_value();
+  std::filesystem::remove(paths->compiled);
+  return compile(shader).has_value();
 }
 
 void Compiler::clearPaths() {
