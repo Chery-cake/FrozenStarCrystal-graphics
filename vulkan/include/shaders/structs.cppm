@@ -47,6 +47,8 @@ template <> struct hash<graphics::vulkan::shaders::Shader> {
     std::size_t hash = std::hash<std::string>{}(path);
     hash ^= std::hash<decltype(timeCount)>{}(timeCount) + golden_ratio +
             (hash << mix_left) + (hash >> mix_right);
+    hash ^= std::hash<std::size_t>{}(sizeVal) + golden_ratio +
+            (hash << mix_left) + (hash >> mix_right);
     return hash;
   }
 
@@ -92,36 +94,52 @@ struct FROZENSTARCRYSTAL_GRAPHICS_API ShaderError {
 struct FROZENSTARCRYSTAL_GRAPHICS_API ShaderModule {
   std::vector<EntryPoint> entryPoints;
   std::string sourcePath;
-  std::string compiledPath;
-  size_t hash;
+
+  files::reloadable_file<files::blob> compiledShaders;
+  files::file_stamp sourceStamp;
 
   ShaderModule(const Shader &shader,
                const std::function<std::string(Shader)> &getShaderBinary)
       : entryPoints(shader.entryPoints), sourcePath(shader.sourcePath),
-        compiledPath(getShaderBinary(shader)),
-        hash(std::hash<Shader>{}(shader)) {}
+        compiledShaders(
+            files::reloadable_file<files::blob>::with_default_loader(
+                files::path{getShaderBinary(shader)})),
+        sourceStamp(files::file_stamp::read(files::path{shader.sourcePath})
+                        .value_or(files::file_stamp{})) {}
+
+  [[nodiscard]] bool sourceChanged() const {
+    auto now = files::file_stamp::read(files::path{sourcePath});
+    return !now || !(*now == sourceStamp);
+  }
+
+  void markRecompiled(std::string newCompiledPath) {
+    compiledShaders = files::reloadable_file<files::blob>::with_default_loader(
+        files::path{std::move(newCompiledPath)});
+    sourceStamp = files::file_stamp::read(files::path{sourcePath})
+                      .value_or(files::file_stamp{});
+  }
+
+  std::expected<void, ShaderError> refreshBinary() {
+    auto r = compiledShaders.refresh();
+    if (!r) {
+      return std::unexpected{
+          ShaderError{.code = ShaderError::Code::fileNotFound,
+                      .message = r.error().what()}};
+    }
+    return {};
+  }
 
   std::expected<std::shared_ptr<vk::raii::ShaderModule>, ShaderError>
-  createModule(vk::raii::Device &device) const {
-
-    auto binResult = files::load(compiledPath);
-    if (!binResult) {
-      return std::unexpected<ShaderError>(
-          {.code = ShaderError::Code::fileNotFound,
-           .message = std::string("Failed to read compiled shader: ") +
-                      binResult.error().what() + '\n'
-
-          });
+  createModule(vk::raii::Device &device) {
+    if (auto r = refreshBinary(); !r) {
+      return std::unexpected{r.error()};
     }
+    const auto &binary = compiledShaders.value();
 
-    const auto &binary = *binResult;
-
-    if (binary.empty()) {
-      return std::unexpected<ShaderError>(
-          {.code = ShaderError::Code::wrongSizeMultiplier,
-           .message = "Compiled shader size not a multiple of 4 bytes"
-
-          });
+    if (binary.empty() || binary.size() % sizeof(uint32_t) != 0) {
+      return std::unexpected{ShaderError{
+          .code = ShaderError::Code::wrongSizeMultiplier,
+          .message = "Compiled shader size not a multiple of 4 bytes"}};
     }
 
     vk::ShaderModuleCreateInfo info{};
@@ -131,24 +149,10 @@ struct FROZENSTARCRYSTAL_GRAPHICS_API ShaderModule {
     try {
       return std::make_shared<vk::raii::ShaderModule>(device, info);
     } catch (const std::exception &e) {
-      return std::unexpected<ShaderError>(
-          {.code = ShaderError::Code::creationFailed,
-           .message = std::string("vk::ShaderModule creation failes: ") +
-                      e.what() + '\n'
-
-          });
-    }
-  }
-
-  bool checkHashForRecreation() {
-    return hash != std::hash<Shader>{}(
-                       {.entryPoints = entryPoints, .sourcePath = sourcePath});
-  }
-
-  void recompile(const std::function<bool(Shader)> &askRecompile) {
-    if (askRecompile({.entryPoints = entryPoints, .sourcePath = sourcePath})) {
-      hash = std::hash<Shader>{}(
-          {.entryPoints = entryPoints, .sourcePath = sourcePath});
+      return std::unexpected{ShaderError{
+          .code = ShaderError::Code::creationFailed,
+          .message = std::string("vk::raii::ShaderModule creating failed ") +
+                     e.what() + '\n'}};
     }
   }
 };

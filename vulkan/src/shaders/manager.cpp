@@ -94,30 +94,32 @@ Manager::getModule(const Shader *tag,
 }
 
 void Manager::reloadShader(const Shader *tag) {
-  // 1. Remove stale cached binary
-  shaderModuleRegistry_.remove(tag);
-
-  // 2. Force recompilation
-  compiler_->askRecompile(*tag);
-
-  // 3. Re-emplace using the freshly compiled binary
-  shaderModuleRegistry_.emplace(tag, [&compiler = compiler_](const Shader &s) {
-    return compiler->getBinary(s);
-  });
-  auto compiledMod = shaderModuleRegistry_.getStored(tag);
-
-  // 4. Recreate modules for every device that has this shader
-  std::unique_lock lock(deviceMtx_);
-  std::ranges::for_each(deviceRegistries_, [&tag, &compiledMod](auto &pair) {
-    auto &&[device, registry] = pair;
-
-    registry->remove(tag);
-
-    auto newMod = compiledMod->createModule(*device);
-    if (newMod) {
-      registry->add(tag, std::move(*newMod));
+  auto existing = shaderModuleRegistry_.getStored(tag);
+  if (!existing) {
+    // Not loaded yet — compile fresh.
+    shaderModuleRegistry_.emplace(tag,
+                                  [&compiler = compiler_](const Shader &s) {
+                                    return compiler->getBinary(s);
+                                  });
+    existing = shaderModuleRegistry_.getStored(tag);
+    if (!existing) {
+      return;
     }
-  });
+  }
+
+  if (compiler_->askRecompile(*tag)) {
+    // Recompile succeeded → install fresh blob loader, reset source stamp.
+    existing->markRecompiled(compiler_->getBinary(*tag));
+  }
+
+  // Recreate device-specific modules.
+  std::unique_lock lock(deviceMtx_);
+  for (auto &[device, registry] : deviceRegistries_) {
+    registry->remove(tag);
+    if (auto m = existing->createModule(*device)) {
+      registry->add(tag, std::move(*m));
+    }
+  }
 }
 
 } // namespace graphics::vulkan::shaders
