@@ -30,6 +30,5 @@ endif()
 # Subsystem dependencies
 # ==============================================================================
 add_subdirectory(graphics)
-add_subdirectory(threading)
 
 message(STATUS "Dependencies configured successfully")

@@ -73,7 +73,6 @@
             llvmTools
             pkgs.perf
 
-            pkgs.tbb.dev
             pkgs.vulkan-loader
             pkgs.vulkan-validation-layers
 
@@ -151,7 +150,6 @@
 
             VK_LAYER_PATH = "${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d";
 
-            TBB_DIR = "${pkgs.tbb.dev}/lib/cmake/TBB";
             CXX_MODULES_JSON = "${gccUnwrapped}/lib/libstdc++.modules.json";
 
             USE_LLVM_LTO = "1";
@@ -189,7 +187,6 @@
             mingwPkgs.vulkan-headers
             mingwPkgs.vulkan-loader
             #mingwPkgs.vulkan-validation-layers
-            mingwPkgs.tbb
           ];
 
           shellHook = ''
